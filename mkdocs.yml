@@ -1,0 +1,52 @@
+site_name: CuccioloFinder
+repo_url: https://github.com/ArmanBehkish/CuccioloFinder
+site_url: https://ArmanBehkish.github.io/CuccioloFinder
+site_description: An App that helps people find their loving puppy!
+site_author: Arman Behkish
+edit_uri: edit/main/docs/
+repo_name: ArmanBehkish/CuccioloFinder
+copyright: Maintained by <a href="https://ArmanBehkish.com">ArmanBehkish</a>.
+
+nav:
+  - Home: index.md
+  - Modules: modules.md
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["src/cucciolofinder"]
+theme:
+  name: material
+  feature:
+    tabs: true
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: white
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ArmanBehkish/CuccioloFinder
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/CuccioloFinder
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
