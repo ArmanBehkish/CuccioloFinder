@@ -18,8 +18,10 @@ classifiers = [
 ]
 dependencies = [
     "loguru>=0.7.3",
+    "pillow>=12.1.0",
     "requests>=2.32.5",
     "scrapy>=2.14.1",
+    "sqlalchemy>=2.0.46",
 ]
 
 [project.urls]

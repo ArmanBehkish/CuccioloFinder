@@ -2,10 +2,15 @@ import scrapy
 from loguru import logger
 
 from cucciolofinder.config import SHELTER_SITES
+from .pipelines import QuattroImagesPipeline
 
 
 class QuattroZampeSpider(scrapy.Spider):
     name = "QuattrozampeSpider"
+    custom_settings = {
+        "ITEM_PIPELINES": {"cucciolofinder.scrapers.pipelines.QuattroImagesPipeline": 1},
+        "IMAGES_STORE": "data/images",
+    }
     start_url = SHELTER_SITES["quattrozampeinfamiglia"].url
     pages= set()
 
@@ -23,8 +28,9 @@ class QuattroZampeSpider(scrapy.Spider):
                 self.pages.add(inside_link)
                 logger.debug(f"number of inside links until now: {len(self.pages)}")
                 yield response.follow(inside_link, callback=self.parse_dog_detail)
+                break
 
-        # Follow next page if exists
+        # next page on regular HTML pagination
         next_page = response.xpath("//a[contains(@class, 'next')]/@href").get()
         logger.debug(f"Following next page: {next_page}")
         if next_page:
@@ -33,5 +39,46 @@ class QuattroZampeSpider(scrapy.Spider):
         
     def parse_dog_detail(self, response):
         # Extract dog data from detail page
-        # TODO: Update selectors based on actual HTML structure
-        pass
+        images = response.xpath("//section[4]/div//img/@src").getall()
+        images = [image for image in images if "spazio_foto" not in image]
+        logger.debug(f"images: {images}")
+
+        # description region
+        desc = response.xpath("/html/body/div[1]/section[5]/div/div[2]")
+        name = desc.css("h2::text").get()
+        logger.debug(f"name: {name}")
+
+        explanation= desc.xpath("//div[contains(@class,'geodir-field-mi_presento')]").css("p::text").get()
+        logger.debug(f"explanations: {explanation}")
+
+        def parse_dog_detail(response):
+            items = response.css("div.geodir_post_meta")
+            characteristics = {}
+            for item in items:
+                label = item.css("span.geodir_post_meta_title::text").get()
+                if label:
+                    label = label.strip().rstrip(":")  # "Età:" -> "Età"
+                    # Get value - text after the label span
+                    value = item.xpath("text()").get()
+                    value = value.strip() if value else None
+                    characteristics[label.lower()] = value
+            return characteristics
+        
+        fields = parse_dog_detail(response)
+        logger.debug(f"fields: {fields}")
+
+        yield {
+            "name": name,
+            "explanation": explanation,
+            "age": fields.get('età'),
+            "sex": fields.get('sesso'),
+            "breed": fields.get('razza cane'),
+            "fur": fields.get('pelo'),
+            "size": fields.get('taglia'),
+            "weight": fields.get('peso kg'),
+            "microchip": fields.get('microchip'),
+            "sterilization": fields.get('sterilizzazione'),
+            "vaccine": fields.get('vaccinazioni'),
+            "deworming": fields.get('sverminazione'),
+            "image_urls": images,
+        }
