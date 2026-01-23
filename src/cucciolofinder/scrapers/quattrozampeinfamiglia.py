@@ -15,7 +15,6 @@ class QuattroZampeSpider(scrapy.Spider):
     pages= set()
 
     def start_requests( self ):
-        logger.debug(f"start URL is : { self.start_url}")
         yield scrapy.Request(url = self.start_url, callback=self.parse)
 
     def parse(self, response):
@@ -24,15 +23,12 @@ class QuattroZampeSpider(scrapy.Spider):
         for card in dog_cards:
             inside_link = card.css("a::attr(href)").get()
             if "torino" in str(inside_link):
-                logger.debug(f"inside link: {inside_link}")
                 self.pages.add(inside_link)
                 logger.debug(f"number of inside links until now: {len(self.pages)}")
                 yield response.follow(inside_link, callback=self.parse_dog_detail)
-                break
 
         # next page on regular HTML pagination
         next_page = response.xpath("//a[contains(@class, 'next')]/@href").get()
-        logger.debug(f"Following next page: {next_page}")
         if next_page:
             yield response.follow(next_page, callback=self.parse)
 
@@ -41,15 +37,13 @@ class QuattroZampeSpider(scrapy.Spider):
         # Extract dog data from detail page
         images = response.xpath("//section[4]/div//img/@src").getall()
         images = [image for image in images if "spazio_foto" not in image]
-        logger.debug(f"images: {images}")
 
         # description region
         desc = response.xpath("/html/body/div[1]/section[5]/div/div[2]")
         name = desc.css("h2::text").get()
-        logger.debug(f"name: {name}")
+        logger.debug(f"Extracting dog: {name}")
 
         explanation= desc.xpath("//div[contains(@class,'geodir-field-mi_presento')]").css("p::text").get()
-        logger.debug(f"explanations: {explanation}")
 
         def parse_dog_detail(response):
             items = response.css("div.geodir_post_meta")
@@ -64,8 +58,8 @@ class QuattroZampeSpider(scrapy.Spider):
                     characteristics[label.lower()] = value
             return characteristics
         
+        # get charactereistic fields
         fields = parse_dog_detail(response)
-        logger.debug(f"fields: {fields}")
 
         yield {
             "name": name,
