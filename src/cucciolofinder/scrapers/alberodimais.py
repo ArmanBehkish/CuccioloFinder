@@ -31,6 +31,7 @@ class AlberoDiMaisSpider(scrapy.Spider):
 
        
     def parse_dog_detail(self, response):
+        logger.debug(f"page URL: {response.url}")
         name = response.css("h2::text").get()
         logger.debug(f"name: {name}")
         # gender is an icon
@@ -44,18 +45,17 @@ class AlberoDiMaisSpider(scrapy.Spider):
                 gender = None
         else:
             gender = None
-
         logger.debug(f"gender: {gender}")
+
+        # descriptions
         descs = response.css(".container p::text").getall()
 
-        if name == "Chanel":
-            logger.debug(f"Chanel here")
-            raise(ValueError)
-
+        # images
         images = response.css("#carousel-myCarousel img.img-fluid::attr(src)").getall()
         logger.debug(f"images: {images}")
 
         yield {
+            "source_url": response.url,
             "name": name,
             "gender": gender,
             "descriptions": descs,   # list of texts

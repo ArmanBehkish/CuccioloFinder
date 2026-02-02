@@ -34,6 +34,7 @@ class QuattroZampeSpider(scrapy.Spider):
 
         
     def parse_dog_detail(self, response):
+        logger.debug(f"page URL: {response.url}")
         # Extract dog data from detail page
         images = response.xpath("//section[4]/div//img/@src").getall()
         images = [image for image in images if "spazio_foto" not in image]
@@ -62,6 +63,7 @@ class QuattroZampeSpider(scrapy.Spider):
         fields = parse_dog_detail(response)
 
         yield {
+            "source_url": response.url,
             "name": name,
             "explanation": explanation,
             "age": fields.get('età'),

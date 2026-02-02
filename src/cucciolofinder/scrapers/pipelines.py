@@ -30,3 +30,18 @@ class AlberoDiMaisPipeline(ImagesPipeline):
             image_index = hash(request.url) % 10000
 
         return f"AlberoDiMais_{dog_name}_{image_index}.{ext}"
+
+
+class EmpethyPipeline(ImagesPipeline):
+    def file_path(self, request, response=None, info=None, *, item=None):
+        dog_name = item.get("name", "unknown").replace(" ", "_")
+        # Supabase URLs have no file extension
+        ext = "jpg"
+        image_urls = item.get("image_urls", [])
+
+        try:
+            image_index = image_urls.index(request.url)
+        except ValueError:
+            image_index = hash(request.url) % 10000
+
+        return f"Empethy_{dog_name}_{image_index}.{ext}"
