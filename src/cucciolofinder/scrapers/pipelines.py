@@ -45,3 +45,31 @@ class EmpethyPipeline(ImagesPipeline):
             image_index = hash(request.url) % 10000
 
         return f"Empethy_{dog_name}_{image_index}.{ext}"
+    
+
+class EnpaTorinoPipeline(ImagesPipeline):
+    def file_path(self, request, response=None, info=None, *, item=None):
+        dog_name = item.get("name", "unknown").replace(" ", "_")
+        ext = request.url.split("?")[0].split(".")[-1] or "jpg"
+        image_urls = item.get("image_urls", [])
+
+        try:
+            image_index = image_urls.index(request.url)
+        except ValueError:
+            image_index = hash(request.url) % 10000
+
+        return f"EnpaTorino_{dog_name}_{image_index}.{ext}"
+
+
+class CanileOasiPipeline(ImagesPipeline):
+    def file_path(self, request, response=None, info=None, *, item=None):
+        dog_name = item.get("name", "unknown").replace(" ", "_")
+        ext = request.url.split("?")[0].split(".")[-1] or "jpg"
+        image_urls = item.get("image_urls", [])
+
+        try:
+            image_index = image_urls.index(request.url)
+        except ValueError:
+            image_index = hash(request.url) % 10000
+
+        return f"CanileOasi_{dog_name}_{image_index}.{ext}"
