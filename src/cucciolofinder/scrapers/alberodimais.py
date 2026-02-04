@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import scrapy
 from loguru import logger
 
@@ -8,7 +10,10 @@ from .pipelines import AlberoDiMaisPipeline
 class AlberoDiMaisSpider(scrapy.Spider):
     name = "AlberoDiMaisSpider"
     custom_settings = {
-        "ITEM_PIPELINES": {"cucciolofinder.scrapers.pipelines.AlberoDiMaisPipeline": 1},
+        "ITEM_PIPELINES": {
+            "cucciolofinder.scrapers.pipelines.AlberoDiMaisPipeline": 1,
+            "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
+        },
         "IMAGES_STORE": "data/images",
     }
     start_url = SHELTER_SITES["alberodimais"].url
@@ -31,9 +36,7 @@ class AlberoDiMaisSpider(scrapy.Spider):
 
        
     def parse_dog_detail(self, response):
-        logger.debug(f"page URL: {response.url}")
         name = response.css("h2::text").get()
-        logger.debug(f"name: {name}")
         # gender is an icon
         gender_class = response.css("i.fas::attr(class)").get()
         if gender_class:
@@ -45,19 +48,34 @@ class AlberoDiMaisSpider(scrapy.Spider):
                 gender = None
         else:
             gender = None
-        logger.debug(f"gender: {gender}")
+
+        # age from birth date
+        age = None
+        for p_text in response.css(".container p::text").getall():
+            if "Data di nascita" in p_text:
+                date_str = p_text.split(":")[-1].strip()
+                try:
+                    birth_date = datetime.strptime(date_str, "%d/%m/%Y")
+                    today = datetime.now()
+                    age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+                except ValueError:
+                    logger.warning(f"Could not parse birth date: {date_str}")
+                break
 
         # descriptions
         descs = response.css(".container p::text").getall()
 
         # images
         images = response.css("#carousel-myCarousel img.img-fluid::attr(src)").getall()
-        logger.debug(f"images: {images}")
+
+        logger.debug(f"Dog: {name}, gender: {gender}, age: {age}, descriptions: {descs}, source URL: {response.url} ")
+
 
         yield {
             "source_url": response.url,
             "name": name,
             "gender": gender,
+            "age": f"{age}",
             "descriptions": descs,   # list of texts
             "image_urls": images,
         }

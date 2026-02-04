@@ -24,7 +24,10 @@ MAX_AGE_DAYS = 365
 class EnpaTorinoSpider(scrapy.Spider):
     name = "EnpaTorinoSpider"
     custom_settings = {
-        "ITEM_PIPELINES": {"cucciolofinder.scrapers.pipelines.EnpaTorinoPipeline": 1},
+        "ITEM_PIPELINES": {
+            "cucciolofinder.scrapers.pipelines.EnpaTorinoPipeline": 1,
+            "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
+        },
         "IMAGES_STORE": "data/images",
     }
 
@@ -88,7 +91,6 @@ class EnpaTorinoSpider(scrapy.Spider):
         raw_name = response.css("h1.post-title::text").get()
         if raw_name:
             name = self._unique_name(raw_name or "unknown")
-            logger.debug(f"Dog name: {name}")
         else:
             raise ValueError("Dog's name missing!")
 
@@ -101,11 +103,11 @@ class EnpaTorinoSpider(scrapy.Spider):
             if joined:
                 description_parts.append(joined)
         description = "\n".join(description_parts)
-        logger.debug(f"Description of {name} : {description}")
 
         # Full-size images from the entry content
         images = response.css("div.entry-inner img.size-full::attr(src)").getall()
-        logger.debug(f"Found {len(images)} images for {name}")
+
+        logger.debug(f"Dog: {name}, descriptoin: {description}, post_date: {post_date.isoformat()}, source URL: {response.url}")
 
         yield {
             "source_url": response.url,

@@ -15,7 +15,10 @@ ITALIAN_MONTHS_FULL: dict[str, int] = {
 class CanileOasiSpider(scrapy.Spider):
     name = "CanileOasiSpider"
     custom_settings = {
-        "ITEM_PIPELINES": {"cucciolofinder.scrapers.pipelines.CanileOasiPipeline": 1},
+        "ITEM_PIPELINES": {
+            "cucciolofinder.scrapers.pipelines.CanileOasiPipeline": 1,
+            "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
+        },
         "IMAGES_STORE": "data/images",
         # Scrapy header is blocked
         "USER_AGENT": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -124,7 +127,7 @@ class CanileOasiSpider(scrapy.Spider):
         logger.debug(f"Found {len(images)} images for {name}")
 
         # check info
-        logger.debug(f"Current dog's name: {name}, gender: {gender}, age: {age}, weight: {weight}, in shelter since: {shelter_since_date.isoformat()}, other criteria: {criteria}, descriptions: {description}")
+        logger.debug(f"Dog: {name}, gender: {gender}, age: {age}, weight: {weight}, in shelter since: {shelter_since_date.isoformat()}, other criteria: {criteria}, descriptions: {description}, source URL: {response.url}")
 
         yield {
             "source_url": response.url,
