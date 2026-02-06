@@ -17,12 +17,16 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
+    "ctranslate2>=4.7.1",
+    "huggingface-hub>=1.4.0",
     "loguru>=0.7.3",
     "pillow>=12.1.0",
     "requests>=2.32.5",
     "scrapy>=2.14.1",
     "scrapy-playwright>=0.0.46",
+    "sentencepiece>=0.2.1",
     "sqlalchemy>=2.0.46",
+    "transformers>=5.0.0",
 ]
 
 [project.urls]

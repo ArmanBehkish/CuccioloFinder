@@ -1,4 +1,4 @@
-from .db import get_engine, get_session, init_db
+from .db import get_engine, get_session, init_db, reset_translations
 from .models import Base, Dog, DogImage, FieldProvenance
 
 __all__ = [
@@ -9,4 +9,5 @@ __all__ = [
     "get_engine",
     "get_session",
     "init_db",
+    "reset_translations",
 ]
