@@ -78,4 +78,7 @@ Thumbs.db
 
 # Project specific
 site/
-data/db/
+docs/
+data/
+*.pem
+*.key

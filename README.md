@@ -16,21 +16,31 @@ Dog profiles are scraped from the following shelter websites in the Torino/Piedm
 | [Canile Oasi](https://canileoasi.it) | Dog shelter in Alpignano (Turin), listing dogs available for adoption |
 
 
-
-
 ## Database
 
-Scraped data is stored in a local **SQLite** database (`data/db/cucciolofinder.db`) using **SQLAlchemy** ORM.
+Scraped data is stored in a local **SQLite** database using **SQLAlchemy** ORM across three tables: `dogs`, `dog_images`, and `field_provenance`.
 
 ### Data Flow
 
 ```
-Spider --> ImagePipeline (downloads images to data/images/) --> DatabasePipeline
-                                                                  ├── normalizes field types across spiders
-                                                                  ├── upserts dog record (insert or update by source_url)
-                                                                  └── links downloaded images with local file paths
+Scrape --> Normalize --> Store --> Enrich
 ```
 
-Each spider has its own image pipeline that runs first, followed by a shared `DatabasePipeline` that normalizes the scraped data and stores it in three tables: `dogs`, `dog_images`, and `field_provenance` (for tracking LLM/image-analysis inferred values).
+1. **Scrape** — Spiders collect dog profiles and images from each shelter website.
+2. **Normalize** — Per-source pipelines clean and standardize the data (merging descriptions, parsing dates, removing boilerplate). Images are downloaded locally.
+3. **Store** — A shared database pipeline upserts records by source URL. If an Italian field changes on re-scrape, its English counterpart is automatically cleared for re-translation.
+4. **Enrich** — The translation pipeline adds English versions of all translatable fields.
+
+
+## Translation & Enrichment
+
+All shelter data is originally in Italian. An enrichment pipeline translates 12 field pairs (description, gender, age, size, breed, fur, medical status, compatibility, etc.) into English.
+
+Translation uses a hybrid approach:
+- **Static mappings** for common shelter vocabulary (gender, size, medical terms) to ensure consistent, accurate translations of domain-specific terms.
+- **ML fallback** using Helsinki-NLP's `opus-mt-it-en` transformer model for free-text and unmapped values. Runs via HuggingFace Inference API in development or as a local model in production.
+
+Every enriched field is tracked in a **field provenance** table recording the method, model, and confidence — providing a full audit trail of what was translated and how.
+
 
 Under Development...
