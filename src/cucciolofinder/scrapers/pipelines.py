@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from urllib.parse import unquote
 
@@ -94,6 +95,13 @@ DOG_DIRECT_FIELDS = [
     "deworming", "shelter_since", "good_with", "bad_with",
 ]
 
+# Fields with english translation
+TRANSLATABLE_FIELDS = [
+    "description", "gender", "age", "size", "breed", "fur",
+    "microchip", "sterilization", "vaccine", "deworming",
+    "good_with", "bad_with",
+]
+
 
 class DatabasePipeline:
     def open_spider(self, spider):
@@ -123,6 +131,10 @@ class DatabasePipeline:
             else:
                 description = criteria_text
 
+        # CanileOasi: remove unwanted sentence "Guarda Tutti i Nostri X Cani in Adozione"
+        if description and source_site == "canileoasi":
+            description = re.sub(r"Guarda Tutti i Nostri (\d+ )?Cani in Adozione\s*", "", description)
+
         # EnpaTorino: post_date ISO string -> date object
         post_date = None
         if "post_date" in item and item["post_date"]:
@@ -138,9 +150,15 @@ class DatabasePipeline:
         with self.Session() as session:
             existing = session.query(Dog).filter_by(source_url=item["source_url"]).first()
             if existing:
-                # update existing row
+                # update existing row, clear _en if Italian field changed
                 for key, value in dog_data.items():
+                    old_value = getattr(existing, key)
                     setattr(existing, key, value)
+                    if old_value != value and key in TRANSLATABLE_FIELDS:
+                        en_field = f"{key}_en"
+                        if hasattr(existing, en_field):
+                            setattr(existing, en_field, None)
+                            logger.debug(f"Cleared {en_field} for dog '{existing.name}' (field changed)")
                 dog = existing
             else:
                 # insert new dog
@@ -155,7 +173,7 @@ class DatabasePipeline:
                 image_path_map[result["url"]] = result["path"]
                 image_path_map[unquote(result["url"])] = result["path"]
 
-            # Replace/add images
+            # Update imgage table
             session.query(DogImage).filter_by(dog_id=dog.id).delete()
             for i, url in enumerate(item.get("image_urls", [])):
                 local_path = image_path_map.get(url) or image_path_map.get(unquote(url))
