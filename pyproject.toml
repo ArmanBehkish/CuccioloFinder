@@ -30,6 +30,9 @@ dependencies = [
     "transformers>=5.0.0",
 ]
 
+[project.optional-dependencies]
+docker = ["torch>=2.6.0"]
+
 [project.urls]
 Homepage = "https://ArmanBehkish.github.io/CuccioloFinder/"
 Repository = "https://github.com/ArmanBehkish/CuccioloFinder"

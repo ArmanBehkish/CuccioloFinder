@@ -25,11 +25,11 @@ if __name__ == "__main__":
     # Step 1: Scrape all sources
     logger.info("Starting scraping...")
     process = CrawlerProcess()
-    #process.crawl(QuattroZampeSpider)
+    # process.crawl(QuattroZampeSpider)
     # process.crawl(EmpethySpider)
     # process.crawl(AlberoDiMaisSpider)
-    # process.crawl(EnpaTorinoSpider)
-    process.crawl(CanileOasiSpider)
+    process.crawl(EnpaTorinoSpider)
+    # process.crawl(CanileOasiSpider)
     process.start()
 
     # Step 2: Enrich translations
