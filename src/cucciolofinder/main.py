@@ -1,5 +1,8 @@
+from dotenv import load_dotenv
 from scrapy.crawler import CrawlerProcess
 from loguru import logger
+
+load_dotenv()
 
 from cucciolofinder.database import get_engine, get_session, init_db, reset_translations
 from cucciolofinder.enrichment import enrich_translations
