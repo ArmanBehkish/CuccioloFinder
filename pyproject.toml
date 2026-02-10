@@ -33,6 +33,14 @@ dependencies = [
 [project.optional-dependencies]
 docker = ["torch>=2.6.0"]
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
 [project.urls]
 Homepage = "https://ArmanBehkish.github.io/CuccioloFinder/"
 Repository = "https://github.com/ArmanBehkish/CuccioloFinder"
