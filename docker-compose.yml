@@ -30,6 +30,7 @@ services:
       - ALL
     volumes:
       - ./data:/app/data
+      - ./data/models:/home/appuser/.cache/huggingface
     tmpfs:
       - /tmp
     env_file:
