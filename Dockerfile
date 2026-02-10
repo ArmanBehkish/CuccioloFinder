@@ -9,7 +9,7 @@ RUN groupadd -r appuser && useradd -r -g appuser -m appuser
 WORKDIR /app
 
 # Install deps (cached layer)
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 RUN pip install uv && uv sync --no-dev --frozen
 
 # Install Chromium + deps
