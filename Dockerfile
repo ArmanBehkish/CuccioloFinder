@@ -10,7 +10,10 @@ WORKDIR /app
 
 # Install deps (cached layer)
 COPY pyproject.toml uv.lock README.md ./
-RUN pip install uv && uv sync --no-dev --frozen --extra docker
+RUN pip install uv && \
+    uv sync --no-dev --frozen --extra docker \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --extra-index-url https://pypi.org/simple
 
 # Install Chromium + deps
 RUN uv run playwright install --with-deps chromium
