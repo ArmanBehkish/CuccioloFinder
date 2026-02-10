@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 
 import scrapy
@@ -19,7 +20,7 @@ class CanileOasiSpider(scrapy.Spider):
             "cucciolofinder.scrapers.pipelines.CanileOasiPipeline": 1,
             "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
         },
-        "IMAGES_STORE": "data/images",
+        "IMAGES_STORE": os.environ.get("IMAGES_PATH", "data/images"),
         # Scrapy header is blocked
         "USER_AGENT": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     }

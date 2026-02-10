@@ -1,3 +1,5 @@
+import os
+
 import scrapy
 from loguru import logger
 from scrapy_playwright.page import PageMethod
@@ -12,7 +14,7 @@ class EmpethySpider(scrapy.Spider):
             "cucciolofinder.scrapers.pipelines.EmpethyPipeline": 1,
             "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
         },
-        "IMAGES_STORE": "data/images",
+        "IMAGES_STORE": os.environ.get("IMAGES_PATH", "data/images"),
         "DOWNLOAD_HANDLERS": {
             "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
             "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",

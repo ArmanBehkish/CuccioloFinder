@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from loguru import logger
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .models import Base, Dog, FieldProvenance
 
-DEFAULT_DB_PATH = Path("data/db/cucciolofinder.db")
+DEFAULT_DB_PATH = Path(os.environ.get("DB_PATH", "data/db/cucciolofinder.db"))
 
 # All translatable _en fields
 TRANSLATION_FIELDS_EN = [

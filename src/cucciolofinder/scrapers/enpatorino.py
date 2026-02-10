@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 
 import scrapy
@@ -28,7 +29,7 @@ class EnpaTorinoSpider(scrapy.Spider):
             "cucciolofinder.scrapers.pipelines.EnpaTorinoPipeline": 1,
             "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
         },
-        "IMAGES_STORE": "data/images",
+        "IMAGES_STORE": os.environ.get("IMAGES_PATH", "data/images"),
     }
 
     def __init__(self, *args: object, **kwargs: object) -> None:
