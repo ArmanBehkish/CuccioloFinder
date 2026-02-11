@@ -37,7 +37,7 @@ if __name__ == "__main__":
     Session = get_session(engine)
     with Session() as session:
         reset_translations(session)
-        enrich_translations(session, limit=10)  # TODO: remove limit for production
+        enrich_translations(session, limit=30)  # TODO: remove limit for production
 
     # TEST — remove after validation
     from cucciolofinder.enrichment.profile_builder import test_profiles

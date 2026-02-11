@@ -2,6 +2,8 @@ import os
 import re
 from pathlib import Path
 
+from loguru import logger
+
 
 # ---------------------------------------------------------------------------
 # Size normalization
@@ -520,10 +522,10 @@ def test_profiles() -> None:
             dogs.extend(sample)
 
     if not dogs:
-        print("No dogs found.")
+        logger.warning("No dogs found in database.")
         return
 
-    print("Loading zero-shot classifier...")
+    logger.info("Loading zero-shot classifier...")
     classifier = load_classifier()
 
     for dog in dogs:
@@ -546,6 +548,5 @@ def test_profiles() -> None:
             temperament=behavior["temperament"],
         )
 
-        print(f"[{dog.source_site}] {dog.name}: {profile}")
-        print()
+        logger.info(f"[{dog.source_site}] {dog.name}: {profile}")
 
