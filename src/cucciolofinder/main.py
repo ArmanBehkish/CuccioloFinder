@@ -25,11 +25,11 @@ if __name__ == "__main__":
     # Step 1: Scrape all sources
     logger.info("Starting scraping...")
     process = CrawlerProcess()
-    # process.crawl(QuattroZampeSpider)
-    # process.crawl(EmpethySpider)
-    # process.crawl(AlberoDiMaisSpider)
+    process.crawl(QuattroZampeSpider)
+    process.crawl(EmpethySpider)
+    process.crawl(AlberoDiMaisSpider)
     process.crawl(EnpaTorinoSpider)
-    # process.crawl(CanileOasiSpider)
+    process.crawl(CanileOasiSpider)
     process.start()
 
     # Step 2: Enrich translations
@@ -38,3 +38,7 @@ if __name__ == "__main__":
     with Session() as session:
         reset_translations(session)
         enrich_translations(session, limit=10)  # TODO: remove limit for production
+
+    # TEST — remove after validation
+    from cucciolofinder.enrichment.profile_builder import test_profiles
+    test_profiles()
