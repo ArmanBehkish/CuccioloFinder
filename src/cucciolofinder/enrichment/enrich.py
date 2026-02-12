@@ -168,11 +168,14 @@ def enrich_breed_detection(session: Session, limit: int | None = None) -> int:
     logger.info("Building AKC breed index...")
     breed_names, akc_embeddings = build_akc_index(tokenizer, embed_model)
 
-    # --- iterate dogs ---
-    query = session.query(Dog)
-    if limit:
-        query = query.limit(limit)
-    dogs = query.all()
+    # --- iterate dogs (TEST: 3 per shelter) ---
+    from sqlalchemy import func
+    shelters = session.query(Dog.source_site).distinct().all()
+    dogs: list[Dog] = []
+    for (site,) in shelters:
+        sample = session.query(Dog).filter_by(source_site=site).order_by(func.random()).limit(3).all()
+        dogs.extend(sample)
+    logger.info(f"Selected {len(dogs)} dogs from {len(shelters)} shelters")
 
     processed = 0
     for dog in dogs:
