@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 from loguru import logger
 from sqlalchemy.orm import Session
 
@@ -125,3 +128,185 @@ def _upsert_provenance(
                 confidence=confidence,
             )
         )
+
+
+IMAGES_DIR = Path(os.environ.get("IMAGES_PATH", "data/images"))
+
+
+def enrich_breed_detection(session: Session, limit: int | None = None) -> int:
+    """Infer breed for each dog using image classification and text profile
+    embedding similarity against the AKC breed index.
+
+    Returns the number of dogs processed.
+    """
+    from .breed_embedding import (
+        build_akc_index,
+        embed_texts,
+        find_closest_breeds,
+        load_embedding_model,
+    )
+    from .image_classifier import classify_breed, load_image_classifier
+    from .profile_builder import (
+        build_profile_text,
+        classify_behavior,
+        load_classifier,
+        normalize_fur,
+        normalize_size,
+        normalize_weight,
+    )
+
+    # --- load models once ---
+    logger.info("Loading image classifier...")
+    processor, img_model, _ = load_image_classifier()
+
+    logger.info("Loading zero-shot classifier...")
+    zsc = load_classifier()
+
+    logger.info("Loading embedding model...")
+    tokenizer, embed_model = load_embedding_model()
+
+    logger.info("Building AKC breed index...")
+    breed_names, akc_embeddings = build_akc_index(tokenizer, embed_model)
+
+    # --- iterate dogs ---
+    query = session.query(Dog)
+    if limit:
+        query = query.limit(limit)
+    dogs = query.all()
+
+    processed = 0
+    for dog in dogs:
+        logger.info(f"--- [{dog.source_site}] {dog.name} (id={dog.id}) ---")
+
+        # ---- 1. Image classification ----
+        image_breeds: list[tuple[str, float]] = []
+        image_paths = [
+            IMAGES_DIR / img.local_path
+            for img in dog.images
+            if img.local_path
+        ]
+        if image_paths:
+            image_breeds = classify_breed(image_paths, processor, img_model)
+            if image_breeds:
+                fmt = ", ".join(f"{b} ({p:.2f})" for b, p in image_breeds)
+                logger.info(f"  Image breeds: {fmt}")
+            else:
+                logger.info("  Image breeds: classification failed")
+        else:
+            logger.info("  Image breeds: no images available")
+
+        # ---- 2. Text profile embedding ----
+        text_breeds: list[tuple[str, float]] = []
+
+        size = normalize_size(dog.size_en) or normalize_size(dog.size)
+        fur = normalize_fur(dog.fur_en) or normalize_fur(dog.fur)
+        weight = normalize_weight(dog.weight)
+
+        behavior = classify_behavior(
+            dog.description_en, dog.good_with_en, dog.bad_with_en, zsc
+        )
+
+        energy = behavior["energy_level"]
+        train = behavior["trainability"]
+        demeanor = behavior["demeanor"]
+        temperament = behavior["temperament"]
+
+        profile = build_profile_text(
+            size=size, fur=fur, weight=weight,
+            energy_level=energy, trainability=train,
+            demeanor=demeanor, temperament=temperament,
+        )
+        logger.info(f"  Profile: {profile or '(empty)'}")
+
+        fields_present = all([size, fur, weight, energy, train, demeanor, temperament])
+
+        if fields_present:
+            dog_emb = embed_texts([profile], tokenizer, embed_model)[0]
+            text_breeds = find_closest_breeds(
+                dog_emb, akc_embeddings, breed_names, top_k=2
+            )
+            fmt = ", ".join(f"{b} ({s:.3f})" for b, s in text_breeds)
+            logger.info(f"  Text breeds: {fmt}")
+        else:
+            missing = [
+                name for name, val in [
+                    ("size", size), ("fur", fur), ("weight", weight),
+                    ("energy", energy), ("trainability", train),
+                    ("demeanor", demeanor), ("temperament", temperament),
+                ]
+                if not val
+            ]
+            logger.info(
+                f"  Text breeds: not enough info to infer breed "
+                f"(missing: {', '.join(missing)})"
+            )
+
+        # ---- 3. Combine results (dynamic α) ----
+        # α = weight given to image signal, (1-α) = weight for text signal.
+        # Dynamic α based on image top-1 confidence:
+        #   > 0.7  → α = 0.8   (image is confident, trust it heavily)
+        #   0.4–0.7 → α = 0.5  (moderate confidence, balanced)
+        #   < 0.4  → α = 0.3   (image unsure, lean on text)
+        # Fallbacks when only one signal is available:
+        #   no image  → α = 0.0  (text only)
+        #   no text   → α = 1.0  (image only)
+        has_image = bool(image_breeds)
+        has_text = bool(text_breeds)
+
+        if not has_image and not has_text:
+            logger.info("  Verdict: not enough information to infer breed")
+            processed += 1
+            continue
+
+        if has_image and has_text:
+            top1_prob = image_breeds[0][1]
+            if top1_prob > 0.7:       # high image confidence
+                alpha = 0.8
+            elif top1_prob >= 0.4:    # moderate image confidence
+                alpha = 0.5
+            else:                     # low image confidence
+                alpha = 0.3
+        elif has_image:
+            alpha = 1.0               # image only
+        else:
+            alpha = 0.0               # text only
+
+        # Merge all candidates into a single pool.
+        # Each candidate accumulates its image and text scores; the combined
+        # score is α × image_score + (1-α) × text_score.
+        candidates: dict[str, dict] = {}
+
+        for breed, prob in image_breeds:
+            key = breed.strip().lower()
+            candidates.setdefault(key, {"image": 0.0, "text": 0.0, "name": breed})
+            candidates[key]["image"] = max(candidates[key]["image"], prob)
+
+        for breed, sim in text_breeds:
+            key = breed.strip().lower()
+            candidates.setdefault(key, {"image": 0.0, "text": 0.0, "name": breed})
+            candidates[key]["text"] = max(candidates[key]["text"], sim)
+
+        for info in candidates.values():
+            info["combined"] = alpha * info["image"] + (1 - alpha) * info["text"]
+
+        ranked = sorted(
+            candidates.values(), key=lambda x: x["combined"], reverse=True
+        )
+        top = ranked[0]
+        logger.info(
+            f"  Verdict: {top['name']} "
+            f"(combined={top['combined']:.3f}, α={alpha}, "
+            f"img={top['image']:.2f}, txt={top['text']:.3f})"
+        )
+        if len(ranked) > 1:
+            r2 = ranked[1]
+            logger.info(
+                f"  Runner-up: {r2['name']} "
+                f"(combined={r2['combined']:.3f}, "
+                f"img={r2['image']:.2f}, txt={r2['text']:.3f})"
+            )
+
+        processed += 1
+
+    logger.info(f"Breed detection complete. Processed {processed} dogs.")
+    return processed

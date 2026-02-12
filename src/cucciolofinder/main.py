@@ -5,7 +5,7 @@ from loguru import logger
 load_dotenv()
 
 from cucciolofinder.database import get_engine, get_session, init_db, reset_translations
-from cucciolofinder.enrichment import enrich_translations
+from cucciolofinder.enrichment import enrich_breed_detection, enrich_translations
 from cucciolofinder.scrapers.quattrozampeinfamiglia import QuattroZampeSpider
 from cucciolofinder.scrapers.alberodimais import AlberoDiMaisSpider
 from cucciolofinder.scrapers.empethy import EmpethySpider
@@ -39,6 +39,8 @@ if __name__ == "__main__":
         reset_translations(session)
         enrich_translations(session, limit=30)  # TODO: remove limit for production
 
-    # TEST — remove after validation
-    from cucciolofinder.enrichment.profile_builder import test_profiles
-    test_profiles()
+    # Step 3: Breed detection (image + text profile)
+    logger.info("Starting breed detection...")
+    with Session() as session:
+        enrich_breed_detection(session, limit=30)  # TODO: remove limit for production
+

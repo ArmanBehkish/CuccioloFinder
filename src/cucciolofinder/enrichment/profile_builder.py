@@ -5,10 +5,7 @@ from pathlib import Path
 from loguru import logger
 
 
-# ---------------------------------------------------------------------------
-# Size normalization
-# ---------------------------------------------------------------------------
-# Target categories (shared vocabulary for both AKC breeds and shelter dogs):
+# SIZE: Target categories (shared vocabulary for both AKC breeds and shelter dogs):
 #   small, medium, large, giant
 
 # English values (after translation by TranslationService)
@@ -67,10 +64,7 @@ def akc_height_to_size(min_height: float, max_height: float) -> str:
     return "giant"
 
 
-# ---------------------------------------------------------------------------
-# Fur / coat normalization
-# ---------------------------------------------------------------------------
-# Target categories (shared vocabulary): short, medium, long
+# FUR:  Target categories (shared vocabulary): short, medium, long
 
 # English values
 _FUR_EN: dict[str, str] = {
@@ -115,10 +109,7 @@ def akc_grooming_to_coat(grooming_category: str | None) -> str | None:
     return _AKC_GROOMING_TO_COAT.get(grooming_category.strip().lower())
 
 
-# ---------------------------------------------------------------------------
-# Weight normalization
-# ---------------------------------------------------------------------------
-# Target categories (shared vocabulary):
+# WEIGHT: Target categories (shared vocabulary):
 #   very light, light, medium, heavy, very heavy
 
 _WEIGHT_BINS: list[tuple[float, str]] = [
@@ -167,9 +158,7 @@ def akc_weight_to_category(min_weight: float, max_weight: float) -> str:
     return _kg_to_category(avg)
 
 
-# ---------------------------------------------------------------------------
 # Behavior classification (zero-shot)
-# ---------------------------------------------------------------------------
 # Uses zero-shot NLI to infer AKC-style behavioral traits from shelter
 # dog descriptions, good_with, and bad_with fields.
 
@@ -462,10 +451,7 @@ def classify_behavior(
     return result
 
 
-# ---------------------------------------------------------------------------
-# Profile template — the final text that gets embedded
-# ---------------------------------------------------------------------------
-
+# Final textual profile
 def build_profile_text(
     size: str | None,
     fur: str | None,
@@ -475,7 +461,13 @@ def build_profile_text(
     demeanor: str | None,
     temperament: list[str] | None,
 ) -> str:
-    """Format all normalized fields into the shared text template for embedding."""
+    """Format all normalized fields into the shared text template for embedding.
+
+    Example output:
+        "temperament: Friendly, Intelligent, Loyal. energy_level: Energetic.
+         trainability: Eager to Please. demeanor: Friendly. size: large.
+         weight: heavy. coat: short"
+    """
     parts: list[str] = []
     if temperament:
         parts.append(f"temperament: {', '.join(temperament)}")
@@ -493,60 +485,4 @@ def build_profile_text(
         parts.append(f"coat: {fur}")
     return ". ".join(parts)
 
-
-# ---------------------------------------------------------------------------
-# TEST — remove after server validation
-# ---------------------------------------------------------------------------
-
-def test_profiles() -> None:
-    """Build and print full profiles for 2 dogs per shelter."""
-    from sqlalchemy import func
-
-    from cucciolofinder.database import Dog, get_engine, get_session
-
-    engine = get_engine()
-    Session = get_session(engine)
-
-    with Session() as session:
-        # pick 2 dogs per source_site
-        sites = [row[0] for row in session.query(Dog.source_site).distinct()]
-        dogs: list = []
-        for site in sites:
-            sample = (
-                session.query(Dog)
-                .filter(Dog.source_site == site)
-                .order_by(func.random())
-                .limit(2)
-                .all()
-            )
-            dogs.extend(sample)
-
-    if not dogs:
-        logger.warning("No dogs found in database.")
-        return
-
-    logger.info("Loading zero-shot classifier...")
-    classifier = load_classifier()
-
-    for dog in dogs:
-        size = normalize_size(dog.size_en or dog.size)
-        fur = normalize_fur(dog.fur_en or dog.fur)
-        weight = normalize_weight(dog.weight)
-
-        desc = dog.description_en or dog.description
-        good = dog.good_with_en or dog.good_with
-        bad = dog.bad_with_en or dog.bad_with
-        behavior = classify_behavior(desc, good, bad, classifier)
-
-        profile = build_profile_text(
-            size=size,
-            fur=fur,
-            weight=weight,
-            energy_level=behavior["energy_level"],
-            trainability=behavior["trainability"],
-            demeanor=behavior["demeanor"],
-            temperament=behavior["temperament"],
-        )
-
-        logger.info(f"[{dog.source_site}] {dog.name}: {profile}")
 
