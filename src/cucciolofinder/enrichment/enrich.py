@@ -133,10 +133,11 @@ def _upsert_provenance(
 IMAGES_DIR = Path(os.environ.get("IMAGES_PATH", "data/images"))
 
 
-def enrich_breed_detection(session: Session, limit: int | None = None) -> int:
+def enrich_breed_detection(session: Session) -> int:
     """Infer breed for each dog using image classification and text profile
     embedding similarity against the AKC breed index.
 
+    Stores the result in dog.breed_en and records provenance.
     Returns the number of dogs processed.
     """
     from .breed_embedding import (
@@ -168,14 +169,9 @@ def enrich_breed_detection(session: Session, limit: int | None = None) -> int:
     logger.info("Building AKC breed index...")
     breed_names, akc_embeddings = build_akc_index(tokenizer, embed_model)
 
-    # --- iterate dogs (TEST: 3 per shelter) ---
-    from sqlalchemy import func
-    shelters = session.query(Dog.source_site).distinct().all()
-    dogs: list[Dog] = []
-    for (site,) in shelters:
-        sample = session.query(Dog).filter_by(source_site=site).order_by(func.random()).limit(3).all()
-        dogs.extend(sample)
-    logger.info(f"Selected {len(dogs)} dogs from {len(shelters)} shelters")
+    # --- iterate all dogs ---
+    dogs = session.query(Dog).all()
+    logger.info(f"Processing breed detection for {len(dogs)} dogs")
 
     processed = 0
     for dog in dogs:
@@ -269,10 +265,13 @@ def enrich_breed_detection(session: Session, limit: int | None = None) -> int:
                 alpha = 0.5
             else:                     # low image confidence
                 alpha = 0.3
+            method = "image+text"
         elif has_image:
             alpha = 1.0               # image only
+            method = "image"
         else:
             alpha = 0.0               # text only
+            method = "text"
 
         # Merge all candidates into a single pool.
         # Each candidate accumulates its image and text scores; the combined
@@ -296,10 +295,22 @@ def enrich_breed_detection(session: Session, limit: int | None = None) -> int:
             candidates.values(), key=lambda x: x["combined"], reverse=True
         )
         top = ranked[0]
+
+        # ---- 4. Store result in database ----
+        dog.breed_en = top["name"]
+        _upsert_provenance(
+            session,
+            dog_id=dog.id,
+            field_name="breed_en",
+            method=method,
+            model_name=f"α={alpha}",
+            confidence=top["combined"],
+        )
+
         logger.info(
             f"  Verdict: {top['name']} "
             f"(combined={top['combined']:.3f}, α={alpha}, "
-            f"img={top['image']:.2f}, txt={top['text']:.3f})"
+            f"img={top['image']:.2f}, txt={top['text']:.3f}, method={method})"
         )
         if len(ranked) > 1:
             r2 = ranked[1]
@@ -311,5 +322,6 @@ def enrich_breed_detection(session: Session, limit: int | None = None) -> int:
 
         processed += 1
 
+    session.commit()
     logger.info(f"Breed detection complete. Processed {processed} dogs.")
     return processed

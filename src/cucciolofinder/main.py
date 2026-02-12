@@ -37,10 +37,10 @@ if __name__ == "__main__":
     Session = get_session(engine)
     with Session() as session:
         reset_translations(session)
-        enrich_translations(session, limit=30)  # TODO: remove limit for production
+        enrich_translations(session)  
 
     # Step 3: Breed detection (image + text profile)
     logger.info("Starting breed detection...")
     with Session() as session:
-        enrich_breed_detection(session, limit=30)  # TODO: remove limit for production
+        enrich_breed_detection(session)
 
