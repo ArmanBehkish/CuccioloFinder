@@ -1,0 +1,36 @@
+name: Full Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'What to deploy'
+        type: choice
+        default: worker
+        options:
+          - worker
+          - api
+          - both
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Full deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/cucciolofinder
+            git pull origin main
+            docker compose --profile worker down
+            docker image rm cucciolofinder-worker || true
+            docker compose --profile worker build worker --no-cache
+            docker image prune -f
+            if [ "${{ inputs.target }}" = "api" ] || [ "${{ inputs.target }}" = "both" ]; then
+              docker compose up -d api
+            fi
+            echo "Full deploy (${{ inputs.target }}) complete at $(date)"
