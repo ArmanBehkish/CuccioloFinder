@@ -43,4 +43,33 @@ Translation uses a hybrid approach:
 Every enriched field is tracked in a **field provenance** table recording the method, model, and confidence — providing a full audit trail of what was translated and how.
 
 
+## Breed Detection
+
+Most shelter dogs are mixed-breed and listed without breed information. A three-stage pipeline infers the most likely breed for each dog by combining visual and textual signals. Some shelters might mention dog breed in descriptions. This can be their guess and is interesting to compare to our system's inference.
+
+### 1. Image Classification
+
+Each dog's photos are passed through a **Vision Transformer** (ViT) fine-tuned on dog breed classification (`wesleyacheng/dog-breeds-multiclass-image-classification-with-vit`). The model returns the top-3 predicted breeds per image. Across all images of the same dog, breed probabilities are max-pooled (keeping the highest confidence seen for each breed) and the top 2 candidates are carried forward.
+
+### 2. Text Profile Embedding & Similarity Search
+
+Structured fields from the shelter listing (size, fur, weight) are normalized into a shared vocabulary aligned with AKC breed standards. Behavioral traits — energy level, trainability, demeanor, and temperament — are inferred from the dog's English description and compatibility fields using **zero-shot NLI classification** (`facebook/bart-large-mnli`).
+
+All normalized traits are formatted into a standardized profile string (e.g. `"temperament: Friendly, Loyal. energy_level: Energetic. size: large. coat: short"`). This profile is embedded with a **sentence-transformer** (`all-MiniLM-L6-v2`) and compared via cosine similarity against a pre-built index of ~280 AKC breed profiles derived from the same template.
+
+### 3. Fusion
+
+Image and text signals are combined using a **dynamic alpha blending** strategy, where alpha is the weight given to the image signal:
+
+| Image top-1 confidence | Alpha | Reasoning |
+|------------------------|-------|-----------|
+| > 0.70 | 0.80 | Image is confident, trust it heavily |
+| 0.40 - 0.70 | 0.50 | Moderate confidence, balanced blend |
+| < 0.40 | 0.30 | Image is unsure, lean on text profile |
+| No images available | 0.00 | Text only |
+| No text profile | 1.00 | Image only |
+
+All candidates from both signals are pooled, and the final score is `alpha * image_score + (1 - alpha) * text_score`. The top-ranked breed is stored in `breed_en` with full provenance (method, alpha value, combined confidence).
+
+
 Under Development...
