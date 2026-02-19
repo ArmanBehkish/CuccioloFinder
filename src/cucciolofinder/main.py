@@ -44,3 +44,15 @@ if __name__ == "__main__":
     with Session() as session:
         enrich_breed_detection(session)
 
+    # Step 4: Data quality tests
+    logger.info("Running data quality tests...")
+    import subprocess
+    result = subprocess.run(
+        ["uv", "run", "pytest", "tests/data_quality/", "-v", "-s"],
+        capture_output=False,
+    )
+    if result.returncode != 0:
+        logger.warning(f"Data quality tests failed (exit code {result.returncode})")
+    else:
+        logger.info("Data quality tests passed")
+
