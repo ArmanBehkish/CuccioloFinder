@@ -1,0 +1,29 @@
+name: Security Checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+
+      - name: Python security scan
+        run: |
+          pip install bandit safety
+          bandit -r src/ -ll
+
+      - name: Check dependencies
+        run: |
+          pip install safety
+          safety check --file pyproject.toml || true
