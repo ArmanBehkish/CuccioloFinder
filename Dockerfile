@@ -1,7 +1,9 @@
 FROM python:3.13-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1       # no __pycache__ in container
-ENV PYTHONUNBUFFERED=1              # logs appear immediately in docker logs
+# No __pycache__ in container
+ENV PYTHONDONTWRITEBYTECODE=1
+# Logs appear immediately in docker logs
+ENV PYTHONUNBUFFERED=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 
 # System tools
