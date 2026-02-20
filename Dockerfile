@@ -23,6 +23,7 @@ RUN uv run playwright install --with-deps chromium
 
 # Copy app code + entrypoint
 COPY src/ src/
+COPY tests/ tests/
 COPY docker-entrypoint.sh /app/
 
 # Data directory for volume mount + uv cache for appuser
