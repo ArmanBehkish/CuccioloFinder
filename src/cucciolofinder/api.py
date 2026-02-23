@@ -2,6 +2,7 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from datetime import date
@@ -86,7 +87,10 @@ async def lifespan(app: FastAPI):
         _state.search_model_ok = False
 
     if _state.db_ok:
-        await asyncio.to_thread(_reload_caches)
+        try:
+            await asyncio.to_thread(_reload_caches)
+        except Exception as exc:
+            logger.warning(f"Cache load failed at startup: {exc}")
 
     yield
 
@@ -116,6 +120,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+Path(IMAGES_DIR).mkdir(parents=True, exist_ok=True)
 app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
 ##### Cache helpers (/api/enums, /api/stats, /api/stats/refresh)
 
@@ -516,6 +521,157 @@ def get_dog(dog_id: int):
             DogImageOut(url=_image_url(img), position=img.position)
             for img in sorted(dog.images, key=lambda img: img.position if img.position is not None else 999)
         ],
+    )
+
+
+#### POST /api/dogs/search
+
+# 2-shot extraction prompt
+_EXTRACTION_PROMPT = """\
+Extract dog search preferences from this text as JSON.
+Valid fields and values:
+- size: small, medium, large, giant
+- gender: male, female
+- fur: short, medium, long
+- weight: very light, light, medium, heavy, very heavy
+- age: puppy, young, adult, senior
+- breed: any breed name
+- good_with: list of e.g. children, elderly, cats, dogs
+- bad_with: list of e.g. children, cats, dogs
+Only include fields that are clearly mentioned or implied. Return only valid JSON.
+
+Text: "I'm looking for a big male dog with long fur, maybe a German Shepherd, that's good with elderly people but not with cats"
+JSON: {"size": "large", "gender": "male", "fur": "long", "breed": "German Shepherd", "good_with": ["elderly"], "bad_with": ["cats"]}
+
+Text: "We need a lightweight puppy for our apartment, preferably vaccinated and good with our two kids"
+JSON: {"weight": "light", "age": "puppy", "good_with": ["children"]}
+
+Text: "<USER_QUERY>"
+JSON:"""
+
+
+def _extract_filters(query: str) -> dict:
+    """Run the LLM on the query and return a dict of extracted filter fields."""
+    import json
+    import re
+
+    prompt = _EXTRACTION_PROMPT.replace("<USER_QUERY>", query)
+    raw = _state.search_model(prompt, max_new_tokens=128)[0]["generated_text"].strip()
+
+    # Try direct parse
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # Fall back: find the first {...} block in the output
+    match = re.search(r"\{[^{}]*\}", raw)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    return {}
+
+
+class SearchRequest(BaseModel):
+    query: str
+    limit: int = Field(default=10, ge=1, le=50)
+
+
+class DogSummaryOut(BaseModel):
+    id: int
+    name: str
+    source_site: str
+    gender_en: str | None
+    age_en: str | None
+    size_en: str | None
+    breed_en: str | None
+    fur_en: str | None
+    weight: str | None
+    thumbnail: str | None
+
+
+class SearchResponse(BaseModel):
+    query: str
+    extracted_filters: dict
+    total: int
+    dogs: list[DogSummaryOut]
+
+
+@app.post("/api/dogs/search", response_model=SearchResponse)
+def search_dogs(req: SearchRequest):
+    """Natural language search: extract filters via LLM then query the DB."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .database.models import Dog
+    from .enrichment.profile_builder import normalize_age, normalize_weight
+
+    if not _state.search_model_ok:
+        raise HTTPException(status_code=503, detail="Search model not available")
+
+    extracted = _extract_filters(req.query)
+
+    engine = _state.engine or get_engine(DEFAULT_DB_PATH)
+    SessionLocal = get_session(engine)
+
+    with SessionLocal() as session:
+        q = select(Dog).options(selectinload(Dog.images))
+
+        # SQL-level filters from extracted fields
+        if gender := extracted.get("gender"):
+            q = q.where(Dog.gender_en == gender)
+        if size := extracted.get("size"):
+            q = q.where(Dog.size_en == size)
+        if breed := extracted.get("breed"):
+            q = q.where(Dog.breed_en.ilike(f"%{breed}%"))
+        if fur := extracted.get("fur"):
+            q = q.where(Dog.fur_en == fur)
+        # good_with / bad_with may be lists — AND condition for each value
+        for gw in extracted.get("good_with") or []:
+            q = q.where(Dog.good_with_en.like(f'%"{gw}"%'))
+        for bw in extracted.get("bad_with") or []:
+            q = q.where(Dog.bad_with_en.like(f'%"{bw}"%'))
+
+        dogs = session.execute(q).scalars().all()
+
+    # post-filters
+    if age := extracted.get("age"):
+        dogs = [d for d in dogs if normalize_age(d.age_en) == age]
+    if weight := extracted.get("weight"):
+        dogs = [d for d in dogs if normalize_weight(d.weight) == weight]
+
+    dogs = dogs[: req.limit]
+
+    dog_list = []
+    for dog in dogs:
+        thumbnail = None
+        if dog.images:
+            first = min(
+                dog.images,
+                key=lambda img: img.position if img.position is not None else 999,
+            )
+            thumbnail = _image_url(first)
+        dog_list.append(DogSummaryOut(
+            id=dog.id,
+            name=dog.name,
+            source_site=dog.source_site,
+            gender_en=dog.gender_en,
+            age_en=dog.age_en,
+            size_en=dog.size_en,
+            breed_en=dog.breed_en,
+            fur_en=dog.fur_en,
+            weight=dog.weight,
+            thumbnail=thumbnail,
+        ))
+
+    return SearchResponse(
+        query=req.query,
+        extracted_filters=extracted,
+        total=len(dog_list),
+        dogs=dog_list,
     )
 
 

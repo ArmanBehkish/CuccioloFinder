@@ -56,3 +56,27 @@ if __name__ == "__main__":
     else:
         logger.info("Data quality tests passed")
 
+    # Step 5: Notify running API to reload caches
+    logger.info("Refreshing API caches...")
+    import os
+    import requests
+    api_url = os.environ.get("API_URL", "http://localhost:8000")
+    try:
+        resp = requests.post(f"{api_url}/api/stats/refresh", timeout=30)
+        resp.raise_for_status()
+        logger.info(f"API cache refresh OK: {resp.json()}")
+    except Exception as exc:
+        logger.warning(f"API cache refresh failed (API may not be running): {exc}")
+
+    # Step 6: API contract tests (against live API)
+    logger.info("Running API tests...")
+    result = subprocess.run(
+        ["uv", "run", "pytest", "tests/api/", "-v", "-s"],
+        capture_output=False,
+        env={**os.environ, "API_URL": api_url},
+    )
+    if result.returncode != 0:
+        logger.warning(f"API tests failed (exit code {result.returncode})")
+    else:
+        logger.info("API tests passed")
+
