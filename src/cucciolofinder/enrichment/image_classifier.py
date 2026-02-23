@@ -5,8 +5,9 @@ from pathlib import Path
 
 from loguru import logger
 
-DEFAULT_IMAGE_MODEL = (
-    "wesleyacheng/dog-breeds-multiclass-image-classification-with-vit"
+DEFAULT_IMAGE_MODEL = os.environ.get(
+    "IMAGE_MODEL_ID",
+    "wesleyacheng/dog-breeds-multiclass-image-classification-with-vit",
 )
 MODELS_DIR = Path(os.environ.get("MODELS_PATH", "data/models"))
 IMAGES_DIR = Path(os.environ.get("IMAGES_PATH", "data/images"))

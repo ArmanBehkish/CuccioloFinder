@@ -58,7 +58,7 @@ class TranslationService:
 
     def __init__(self) -> None:
         self.use_local = bool(os.environ.get("USE_LOCAL_MODEL"))
-        self.model_name = "Helsinki-NLP/opus-mt-it-en"
+        self.model_name = os.environ.get("TRANSLATION_MODEL_ID", "Helsinki-NLP/opus-mt-it-en")
         self._client = None
         self._tokenizer = None
         self._model = None

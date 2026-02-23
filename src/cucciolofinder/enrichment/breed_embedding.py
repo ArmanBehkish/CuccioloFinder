@@ -16,7 +16,7 @@ from .profile_builder import (
     build_profile_text,
 )
 
-DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_EMBED_MODEL = os.environ.get("EMBED_MODEL_ID", "sentence-transformers/all-MiniLM-L6-v2")
 MODELS_DIR = Path(os.environ.get("MODELS_PATH", "data/models"))
 AKC_CSV = Path(os.environ.get("AKC_CSV_PATH", "data/datasets/akc-data-latest.csv"))
 

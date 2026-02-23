@@ -152,6 +152,37 @@ def normalize_weight(value: str | None) -> str | None:
     return _kg_to_category(kg)
 
 
+# AGE: Target categories: puppy (<1 year), young (1–3 years), adult (4–7 years), senior (8+ years)
+
+def normalize_age(age_en: str | None) -> str | None:
+    """Derive age_category from an English age string like '3 years', '6 months'.
+
+    Returns one of: 'puppy', 'young', 'adult', 'senior', or None if unparseable.
+    """
+    import re
+    if not age_en:
+        return None
+    s = age_en.strip().lower()
+    months_match = re.search(r"(\d+)\s+month", s)
+    years_match = re.search(r"(\d+)\s+year", s)
+    if months_match:
+        months = int(months_match.group(1))
+        years = int(years_match.group(1)) if years_match else 0
+        total_years = years + months / 12
+    elif years_match:
+        total_years = int(years_match.group(1))
+    else:
+        return None
+
+    if total_years < 1:
+        return "puppy"
+    if total_years <= 3:
+        return "young"
+    if total_years <= 7:
+        return "adult"
+    return "senior"
+
+
 def akc_weight_to_category(min_weight: float, max_weight: float) -> str:
     """Categorize an AKC breed weight range (kg) using the midpoint."""
     avg = (min_weight + max_weight) / 2
@@ -162,7 +193,7 @@ def akc_weight_to_category(min_weight: float, max_weight: float) -> str:
 # Uses zero-shot NLI to infer AKC-style behavioral traits from shelter
 # dog descriptions, good_with, and bad_with fields.
 
-DEFAULT_ZSC_MODEL = "facebook/bart-large-mnli"
+DEFAULT_ZSC_MODEL = os.environ.get("ZSC_MODEL_ID", "facebook/bart-large-mnli")
 MODELS_DIR = Path(os.environ.get("MODELS_PATH", "data/models"))
 
 ENERGY_LABELS = [
