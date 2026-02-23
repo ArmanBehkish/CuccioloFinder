@@ -72,4 +72,43 @@ Image and text signals are combined using a **dynamic alpha blending** strategy,
 All candidates from both signals are pooled, and the final score is `alpha * image_score + (1 - alpha) * text_score`. The top-ranked breed is stored in `breed_en` with full provenance (method, alpha value, combined confidence).
 
 
+## API
+
+A FastAPI application serves the processed data to the frontend. The API container runs independently (`restart: unless-stopped`) while the worker populates the database on a schedule.
+
+### Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check — returns server, DB, and search model readiness |
+| `/api/enums` | GET | Distinct values for all filterable fields (for frontend dropdowns) |
+| `/api/stats` | GET | Row-level dog data for frontend analytics and charts |
+| `/api/stats/refresh` | POST | Reload enums + stats caches from DB (called by worker after each scrape cycle) |
+| `/api/filter-dogs` | GET | Structured search with optional filters (source, gender, size, breed, age, fur, weight, medical status, compatibility, dates) — all AND'd |
+| `/api/dogs/{id}` | GET | Full dog profile with all fields and images |
+| `/api/dogs/search` | POST | Natural language search — LLM extracts structured filters from free text, then queries the DB |
+
+### Features
+
+- In-memory caching for enums and stats, refreshable by the worker after each scrape cycle
+- Natural language search powered by LLM-based filter extraction
+- Locally served dog images with fallback to original URLs
+- Configurable CORS
+
+
+## AI-Powered Pipeline
+
+The entire data flow — from raw Italian shelter listings to a searchable, English-language adoption platform — is driven by five pretrained transformer models. They handle translation, breed identification, behavioral profiling, and natural language search without any manual labeling or fine-tuning.
+
+| Model | Purpose |
+|-------|---------|
+| [Helsinki-NLP/opus-mt-it-en](https://huggingface.co/Helsinki-NLP/opus-mt-it-en) | Italian → English translation of shelter fields |
+| [facebook/bart-large-mnli](https://huggingface.co/facebook/bart-large-mnli) | Zero-shot classification of behavioral traits (energy, trainability, temperament) from descriptions |
+| [wesleyacheng/dog-breeds-multiclass-image-classification-with-vit](https://huggingface.co/wesleyacheng/dog-breeds-multiclass-image-classification-with-vit) | Image-based breed detection via Vision Transformer |
+| [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | Sentence embeddings for breed profile similarity matching against AKC standards |
+| [google/flan-t5-large](https://huggingface.co/google/flan-t5-large) | Natural language search query → structured filter extraction |
+
+All models run on CPU and are configurable via environment variables.
+
+
 Under Development...
