@@ -54,7 +54,7 @@ def _load_search_model() -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     _state.search_model = hf_pipeline(
-        "text2text-generation",
+        "text-generation",
         model=SEARCH_MODEL_ID,
         model_kwargs={"cache_dir": str(cache_dir)},
         device="cpu",
@@ -556,7 +556,8 @@ def _extract_filters(query: str) -> dict:
     import re
 
     prompt = _EXTRACTION_PROMPT.replace("<USER_QUERY>", query)
-    raw = _state.search_model(prompt, max_new_tokens=128)[0]["generated_text"].strip()
+    result = _state.search_model(prompt, max_new_tokens=128, return_full_text=False)
+    raw = result[0]["generated_text"].strip()
 
     # Try direct parse
     try:
