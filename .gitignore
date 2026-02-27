@@ -81,5 +81,7 @@ Thumbs.db
 site/
 docs/
 data/
+logs/
+scripts/
 *.pem
 *.key
