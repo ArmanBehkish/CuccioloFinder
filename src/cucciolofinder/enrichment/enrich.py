@@ -13,6 +13,20 @@ SIMPLE_FIELDS = ["gender", "size", "fur", "microchip", "sterilization", "vaccine
 LIST_FIELDS = ["good_with", "bad_with"]
 COMPLEX_FIELDS = ["description", "age"]
 
+# Medical fields: normalize any positive/negative value to yes/no
+MEDICAL_FIELDS = {"microchip", "sterilization", "vaccine", "deworming"}
+_MEDICAL_YES = {"yes", "si", "sì", "microchipped", "sterilized", "vaccinated", "dewormed",
+                "dotato di microchip", "sterilizzato", "vaccinato", "sverminato"}
+_MEDICAL_NO = {"no", "not sterilized", "non sterilizzato"}
+
+def _normalize_medical(value: str) -> str:
+    v = value.strip().lower()
+    if v in _MEDICAL_YES:
+        return "yes"
+    if v in _MEDICAL_NO:
+        return "no"
+    return v
+
 def enrich_translations(session: Session, limit: int | None = None) -> int:
     """
     Translate Italian fields to English for dogs with NULL _en fields.
@@ -43,7 +57,8 @@ def enrich_translations(session: Session, limit: int | None = None) -> int:
             if italian_value and english_value is None:
                 translated = translator.translate_field(italian_value)
                 if translated:
-                    setattr(dog, en_field, translated)
+                    value = _normalize_medical(translated) if field in MEDICAL_FIELDS else translated.lower()
+                    setattr(dog, en_field, value)
                     updated = True
                     # logger.debug(f"[{dog.name}] {field} Translation: IT: ' {italian_value}' → EN: '{translated}'")
 

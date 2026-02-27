@@ -26,14 +26,14 @@ TRANSLATION_MAP: dict[str, str] = {
     "Sì": "yes",
     "no": "no",
     # vaccine
-    "Vaccinato": "vaccinated",
+    "Vaccinato": "yes",
     # sterilization
-    "Sterilizzato": "sterilized",
-    "Non sterilizzato": "not sterilized",
+    "Sterilizzato": "yes",
+    "Non sterilizzato": "no",
     # deworming
-    "Sverminato": "dewormed",
+    "Sverminato": "yes",
     # microchip
-    "Dotato di microchip": "microchipped",
+    "Dotato di microchip": "yes",
     # fur
     "corto": "short",
     "lungo": "long",
@@ -48,8 +48,12 @@ TRANSLATION_MAP: dict[str, str] = {
     "gatti femmina": "female cats",
     "Cani maschi": "male dogs",
     "cani maschi": "male dogs",
+    "Cani maschi interi": "unneutered male dogs",
+    "cani maschi interi": "unneutered male dogs",
     "Cani femmina": "female dogs",
     "cani femmina": "female dogs",
+    "Cani femmina intere": "unspayed female dogs",
+    "cani femmina intere": "unspayed female dogs",
 }
 
 
