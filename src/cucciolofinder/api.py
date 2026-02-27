@@ -326,9 +326,8 @@ class FilterDogsParams(BaseModel):
     post_date_to: date | None = None
     shelter_since_from: date | None = None
     shelter_since_to: date | None = None
-    limit: int = Field(default=30, ge=1, le=100)
     page: int = Field(default=1, ge=1)
-    page_size: int = Field(default=20, ge=1)
+    page_size: int = Field(default=20, ge=1, le=100)
 
 
 def _image_url(img: DogImage) -> str:
@@ -411,12 +410,10 @@ def filter_dogs(params: FilterDogsParams = Depends()):
             filtered.append(d)
         dogs = filtered
 
-    # Cap at limit, then paginate within that pool
-    dogs = dogs[: params.limit]
     total = len(dogs)
-    page_size = min(params.page_size, params.limit)
-    offset = (params.page - 1) * page_size
-    page_dogs = dogs[offset : offset + page_size]
+    offset = (params.page - 1) * params.page_size
+
+    page_dogs = dogs[offset : offset + params.page_size]
 
     dog_list = []
     for dog in page_dogs:
@@ -443,7 +440,7 @@ def filter_dogs(params: FilterDogsParams = Depends()):
     return {
         "total": total,
         "page": params.page,
-        "page_size": page_size,
+        "page_size": params.page_size,
         "dogs": dog_list,
     }
 
