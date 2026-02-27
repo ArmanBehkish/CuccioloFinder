@@ -29,6 +29,8 @@ jobs:
             docker compose --profile worker build worker
             docker image prune -f
             if [ "${{ inputs.target }}" = "api" ] || [ "${{ inputs.target }}" = "both" ]; then
+              docker compose down api
+              docker compose build api
               docker compose up -d api
             fi
             echo "Quick deploy (${{ inputs.target }}) complete at $(date)"
