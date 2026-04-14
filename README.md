@@ -100,6 +100,7 @@ A FastAPI application serves the processed data to the frontend. The API contain
 
 ## AI-Powered Pipeline
 
+The goal in this project is to only use local models so it can be used without the need of providing commercial API key. Since this is an experimental project, and the compute resources are limited, the models are choosen accordingly.
 The entire data flow — from raw Italian shelter listings to a searchable, English-language adoption platform — is driven by five pretrained transformer models. They handle translation, breed identification, behavioral profiling, and natural language search without any manual labeling or fine-tuning.
 
 | Model | Purpose |
