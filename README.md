@@ -53,6 +53,8 @@ Each dog's photos are passed through a **Vision Transformer** (ViT) fine-tuned o
 
 ### 2. Text Profile Embedding & Similarity Search
 
+AKCdata is a dataset of information about 277 dog breeds extracted from the American Kennel Club website. It contains 20 features of different dog breeds. We want to transform extracted textual data as much as possible to vectors with similar features and then use embeddings to find the closest breed in this dataset to detect the dog breed. This is solely experimental as some of the shelter provide very little textual information which makes building these features almost impossible.
+
 Structured fields from the shelter listing (size, fur, weight) are normalized into a shared vocabulary aligned with AKC breed standards. Behavioral traits — energy level, trainability, demeanor, and temperament — are inferred from the dog's English description and compatibility fields using **zero-shot NLI classification** (`facebook/bart-large-mnli`).
 
 All normalized traits are formatted into a standardized profile string (e.g. `"temperament: Friendly, Loyal. energy_level: Energetic. size: large. coat: short"`). This profile is embedded with a **sentence-transformer** (`all-MiniLM-L6-v2`) and compared via cosine similarity against a pre-built index of ~280 AKC breed profiles derived from the same template.
