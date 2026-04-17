@@ -641,10 +641,16 @@ def search_dogs(req: SearchRequest):
             q = q.where(Dog.breed_en.ilike(f"%{breed}%"))
         if fur := extracted.get("fur"):
             q = q.where(Dog.fur_en == fur)
-        # good_with / bad_with may be lists — AND condition for each value
-        for gw in extracted.get("good_with") or []:
+        # good_with / bad_with may be lists or strings — AND condition for each value
+        gw_val = extracted.get("good_with") or []
+        if isinstance(gw_val, str):
+            gw_val = [gw_val]
+        for gw in gw_val:
             q = q.where(Dog.good_with_en.like(f'%"{gw}"%'))
-        for bw in extracted.get("bad_with") or []:
+        bw_val = extracted.get("bad_with") or []
+        if isinstance(bw_val, str):
+            bw_val = [bw_val]
+        for bw in bw_val:
             q = q.where(Dog.bad_with_en.like(f'%"{bw}"%'))
 
         dogs = session.execute(q).scalars().all()
