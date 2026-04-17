@@ -45,20 +45,17 @@ def _probe_db() -> None:
 
 
 def _load_search_model() -> None:
-    """Blocking: load the search model from disk into memory."""
+    """Blocking: load the T5 model and tokenizer directly (avoids pipeline task-name issues)."""
     from pathlib import Path
-    from transformers import pipeline as hf_pipeline
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
     models_dir = Path(os.environ.get("MODELS_PATH", "data/models"))
     cache_dir = models_dir / SEARCH_MODEL_ID.replace("/", "--")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    _state.search_model = hf_pipeline(
-        "text2text-generation",
-        model=SEARCH_MODEL_ID,
-        model_kwargs={"cache_dir": str(cache_dir)},
-        device="cpu",
-    )
+    tokenizer = AutoTokenizer.from_pretrained(SEARCH_MODEL_ID, cache_dir=str(cache_dir))
+    model = AutoModelForSeq2SeqLM.from_pretrained(SEARCH_MODEL_ID, cache_dir=str(cache_dir))
+    _state.search_model = (tokenizer, model)
     _state.search_model_ok = True
 
 
@@ -560,8 +557,10 @@ def _extract_filters(query: str) -> dict:
     import re
 
     prompt = _EXTRACTION_PROMPT.replace("<USER_QUERY>", query)
-    result = _state.search_model(prompt, max_new_tokens=128)
-    raw = result[0]["generated_text"].strip()
+    tokenizer, model = _state.search_model
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+    outputs = model.generate(**inputs, max_new_tokens=128)
+    raw = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
     # Try direct parse
     try:
