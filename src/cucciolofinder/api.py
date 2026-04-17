@@ -569,11 +569,18 @@ def _extract_filters(query: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Fall back: find the first {...} block in the output
-    match = re.search(r"\{[^{}]*\}", raw)
+    # Fall back: find the first {...} block (supports nested arrays/objects)
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
         try:
             return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    # Fall back: wrap bare key-value output in braces (model sometimes omits {})
+    if ":" in raw:
+        try:
+            return json.loads("{" + raw + "}")
         except json.JSONDecodeError:
             pass
 
