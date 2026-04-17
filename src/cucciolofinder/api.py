@@ -54,7 +54,7 @@ def _load_search_model() -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     _state.search_model = hf_pipeline(
-        "text-generation",
+        "text2text-generation",
         model=SEARCH_MODEL_ID,
         model_kwargs={"cache_dir": str(cache_dir)},
         device="cpu",
@@ -462,6 +462,7 @@ class DogProfileOut(BaseModel):
     age_en: str | None
     size_en: str | None
     breed_en: str | None
+    breed_confidence: float | None
     fur_en: str | None
     weight: str | None
     microchip_en: str | None
@@ -481,7 +482,7 @@ def get_dog(dog_id: int):
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
-    from .database.models import Dog
+    from .database.models import Dog, FieldProvenance
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
     SessionLocal = get_session(engine)
@@ -491,8 +492,13 @@ def get_dog(dog_id: int):
             select(Dog).where(Dog.id == dog_id).options(selectinload(Dog.images))
         ).scalar_one_or_none()
 
-    if dog is None:
-        raise HTTPException(status_code=404, detail=f"Dog {dog_id} not found")
+        if dog is None:
+            raise HTTPException(status_code=404, detail=f"Dog {dog_id} not found")
+
+        breed_prov = session.execute(
+            select(FieldProvenance.confidence)
+            .where(FieldProvenance.dog_id == dog_id, FieldProvenance.field_name == "breed_en")
+        ).scalar_one_or_none()
 
     return DogProfileOut(
         id=dog.id,
@@ -504,6 +510,7 @@ def get_dog(dog_id: int):
         age_en=dog.age_en,
         size_en=dog.size_en,
         breed_en=dog.breed_en,
+        breed_confidence=breed_prov,
         fur_en=dog.fur_en,
         weight=dog.weight,
         microchip_en=dog.microchip_en,
@@ -553,7 +560,7 @@ def _extract_filters(query: str) -> dict:
     import re
 
     prompt = _EXTRACTION_PROMPT.replace("<USER_QUERY>", query)
-    result = _state.search_model(prompt, max_new_tokens=128, return_full_text=False)
+    result = _state.search_model(prompt, max_new_tokens=128)
     raw = result[0]["generated_text"].strip()
 
     # Try direct parse
