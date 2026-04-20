@@ -56,7 +56,7 @@ def _load_search_model() -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(SEARCH_MODEL_ID, cache_dir=str(cache_dir))
     model = AutoModelForSeq2SeqLM.from_pretrained(
-        SEARCH_MODEL_ID, cache_dir=str(cache_dir), torch_dtype=torch.float16,
+        SEARCH_MODEL_ID, cache_dir=str(cache_dir), dtype=torch.float16,
     )
     _state.search_model = (tokenizer, model)
     _state.search_model_ok = True
@@ -575,8 +575,8 @@ def _fix_raw_output(raw: str) -> str:
     return raw
 
 
-def _extract_filters(query: str) -> dict:
-    """Run the LLM on the query and return a dict of extracted filter fields."""
+def _extract_filters(query: str) -> tuple[dict, str]:
+    """Run the LLM on the query and return (extracted_filters, raw_output)."""
     import json
     import re
 
@@ -601,20 +601,20 @@ def _extract_filters(query: str) -> dict:
     # Try direct parse
     result = _try_parse(raw)
     if result is not None:
-        return result
+        return result, raw
 
     # Try with braces extracted
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
         result = _try_parse(match.group())
         if result is not None:
-            return result
+            return result, raw
 
     # Wrap bare output in braces
     if ":" in raw:
         result = _try_parse("{" + raw + "}")
         if result is not None:
-            return result
+            return result, raw
 
     # Fix malformed output (missing quotes, bare lists) then try all again
     fixed = _fix_raw_output(raw)
@@ -622,9 +622,9 @@ def _extract_filters(query: str) -> dict:
 
     result = _try_parse("{" + fixed + "}")
     if result is not None:
-        return result
+        return result, raw
 
-    return {}
+    return {}, raw
 
 
 class SearchRequest(BaseModel):
@@ -648,6 +648,7 @@ class DogSummaryOut(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     extracted_filters: dict
+    raw_model_output: str  # TEMPORARY — remove after testing
     total: int
     dogs: list[DogSummaryOut]
 
@@ -664,7 +665,7 @@ def search_dogs(req: SearchRequest):
     if not _state.search_model_ok:
         raise HTTPException(status_code=503, detail="Search model not available")
 
-    extracted = _extract_filters(req.query)
+    extracted, raw_output = _extract_filters(req.query)
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
     SessionLocal = get_session(engine)
@@ -728,9 +729,27 @@ def search_dogs(req: SearchRequest):
     return SearchResponse(
         query=req.query,
         extracted_filters=extracted,
+        raw_model_output=raw_output,
         total=len(dog_list),
         dogs=dog_list,
     )
+
+
+#### POST /api/debug/prompt (TEMPORARY — remove after testing)
+
+class DebugPromptRequest(BaseModel):
+    prompt: str
+
+@app.post("/api/debug/prompt")
+def debug_prompt(req: DebugPromptRequest):
+    """Temporary: send a raw prompt to the search model and return the raw output."""
+    if not _state.search_model_ok:
+        raise HTTPException(status_code=503, detail="Search model not available")
+    tokenizer, model = _state.search_model
+    inputs = tokenizer(req.prompt, return_tensors="pt", truncation=True, max_length=512)
+    outputs = model.generate(**inputs, max_new_tokens=200)
+    raw = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+    return {"raw_output": raw}
 
 
 #### GET /api/health
