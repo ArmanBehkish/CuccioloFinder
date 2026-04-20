@@ -109,7 +109,7 @@ The entire data flow — from raw Italian shelter listings to a searchable, Engl
 | [facebook/bart-large-mnli](https://huggingface.co/facebook/bart-large-mnli) | Zero-shot classification of behavioral traits (energy, trainability, temperament) from descriptions |
 | [wesleyacheng/dog-breeds-multiclass-image-classification-with-vit](https://huggingface.co/wesleyacheng/dog-breeds-multiclass-image-classification-with-vit) | Image-based breed detection via Vision Transformer |
 | [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | Sentence embeddings for breed profile similarity matching against AKC standards |
-| [google/flan-t5-large](https://huggingface.co/google/flan-t5-large) | Natural language search query → structured filter extraction |
+| [google/flan-t5-xl](https://huggingface.co/google/flan-t5-xl) | Natural language search query → structured filter extraction (float16, ~3GB) |
 
 All models run on CPU and are configurable via environment variables.
 

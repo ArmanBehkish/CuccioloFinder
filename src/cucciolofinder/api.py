@@ -16,8 +16,8 @@ from sqlalchemy import Engine, text
 from .database.db import DEFAULT_DB_PATH, get_engine, get_session
 from .database.models import DogImage
 
-# .78 B Param Model, change in env if no mem
-SEARCH_MODEL_ID = os.environ.get("SEARCH_MODEL_ID", "google/flan-t5-large")
+# 3B Param Model (float16 ~3GB), change in env if no mem
+SEARCH_MODEL_ID = os.environ.get("SEARCH_MODEL_ID", "google/flan-t5-xl")
 
 #### App state
 
@@ -46,6 +46,7 @@ def _probe_db() -> None:
 
 def _load_search_model() -> None:
     """Blocking: load the T5 model and tokenizer directly (avoids pipeline task-name issues)."""
+    import torch
     from pathlib import Path
     from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
@@ -54,7 +55,9 @@ def _load_search_model() -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = AutoTokenizer.from_pretrained(SEARCH_MODEL_ID, cache_dir=str(cache_dir))
-    model = AutoModelForSeq2SeqLM.from_pretrained(SEARCH_MODEL_ID, cache_dir=str(cache_dir))
+    model = AutoModelForSeq2SeqLM.from_pretrained(
+        SEARCH_MODEL_ID, cache_dir=str(cache_dir), torch_dtype=torch.float16,
+    )
     _state.search_model = (tokenizer, model)
     _state.search_model_ok = True
 
