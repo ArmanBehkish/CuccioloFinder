@@ -532,16 +532,17 @@ def get_dog(dog_id: int):
 
 # 3-shot extraction prompt
 _EXTRACTION_PROMPT = """\
-Extract ALL dog search preferences from the text as a single JSON object. Include every attribute that is mentioned or clearly implied. Do not skip any.
+You are given a text input from user describing the characteristics of a dog they are searching from a shelter. Your task as a dog expert is to process the text and extract the fields as described below, and output a JSON with field names and their values. the fileds and their possible values are listed below. for the breed, the exhaustive list of values is not provided, use your expert option to extarct that field. for example, you know German Shepherd is a dog breed, even if user wrote simething slightly different.
+Include every attribute that is mentioned or implied. Do not skip any.
 Valid fields and values:
 - size: small, medium, large, giant
 - gender: male, female
 - fur: short, medium, long
-- weight: very light, light, medium, heavy, very heavy
+- weight: light, medium, heavy
 - age: puppy, young, adult, senior
-- breed: any breed name
-- good_with: list of e.g. children, elderly, cats, dogs
-- bad_with: list of e.g. children, cats, dogs
+- breed: "breed name from the text, e.g., 'German Shepherd'"
+- good_with: "list of good_with from: children, elderly, cats, dogs, ..., e.g., ['cats','children']"
+- bad_with: "list of bad_with from: children, elderly, cats, dogs, ..., e.g., ['cats','children']"
 
 Text: "I'm looking for a big male dog with long fur, maybe a German Shepherd, that's good with elderly people but not with cats"
 JSON: {"size": "large", "gender": "male", "fur": "long", "breed": "German Shepherd", "good_with": ["elderly"], "bad_with": ["cats"]}
@@ -586,7 +587,7 @@ def _extract_filters(query: str) -> tuple[dict, str]:
 
     prompt = _EXTRACTION_PROMPT.replace("<USER_QUERY>", query)
     tokenizer, model = _state.search_model
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
     outputs = model.generate(**inputs, max_new_tokens=128)
     raw = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
     logger.info(f"Search model raw output: {raw!r}")
