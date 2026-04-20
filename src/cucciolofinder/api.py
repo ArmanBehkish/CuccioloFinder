@@ -532,23 +532,27 @@ def get_dog(dog_id: int):
 
 # 3-shot extraction prompt
 _EXTRACTION_PROMPT = """\
-You are given a text input from user describing the characteristics of a dog they are searching from a shelter. Your task as a dog expert is to process the text and extract the fields as described below, and output a JSON with field names and their values. the fileds and their possible values are listed below. for the breed, the exhaustive list of values is not provided, use your expert option to extarct that field. for example, you know German Shepherd is a dog breed, even if user wrote simething slightly different.
+You are given a text input from user describing the characteristics of a dog they are searching from a shelter. Your task as a dog expert is to process the text and extract the fields, and output a JSON with key names and values. The keys and their possible values are listed below.
 Include every attribute that is mentioned or implied. Do not skip any.
-Valid fields and values:
+For good_with and bad_with keys, the value/values should be returned inside a list (see the examples).
+They keys and values in the returned JSON should only come from the following list. I REPEAT, only use keys and values that are listed below. Don't invent any key/value that is not in the list below.
+Valid keys and values:
 - size: small, medium, large, giant
 - gender: male, female
 - fur: short, medium, long
 - weight: light, medium, heavy
 - age: puppy, young, adult, senior
-- breed: "breed name from the text, e.g., 'German Shepherd'"
-- good_with: "list of good_with from: children, elderly, cats, dogs, ..., e.g., ['cats','children']"
-- bad_with: "list of bad_with from: children, elderly, cats, dogs, ..., e.g., ['cats','children']"
+- breed: 'German Shepherd', 'Golden Retriever', 'Doberman'
+- good_with: children, elderly, cats, dogs
+- bad_with: children, elderly, cats, dogs
+
+Examples: 
 
 Text: "I'm looking for a big male dog with long fur, maybe a German Shepherd, that's good with elderly people but not with cats"
 JSON: {"size": "large", "gender": "male", "fur": "long", "breed": "German Shepherd", "good_with": ["elderly"], "bad_with": ["cats"]}
 
-Text: "We need a lightweight puppy for our apartment, preferably vaccinated and good with our two kids"
-JSON: {"weight": "light", "age": "puppy", "good_with": ["children"]}
+Text: "We need a lightweight puppy for our apartment, preferably vaccinated and good with our two kids and elderly"
+JSON: {"weight": "light", "age": "puppy", "good_with": ["children","elderly"]}
 
 Text: "small female puppy that likes cats"
 JSON: {"size": "small", "gender": "female", "age": "puppy", "good_with": ["cats"]}
