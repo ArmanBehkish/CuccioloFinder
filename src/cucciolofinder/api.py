@@ -551,10 +551,33 @@ Text: "<USER_QUERY>"
 JSON:"""
 
 
+def _fix_raw_output(raw: str) -> str:
+    """Best-effort fix of malformed model output into valid JSON."""
+    import re
+
+    # Add missing quotes around unquoted values: "key": value -> "key": "value"
+    # Handles: "gender": male  or  "fur": short
+    raw = re.sub(
+        r'("[\w_]+")\s*:\s*(?!"|\[)([a-zA-Z][a-zA-Z ]*?)(?=\s*[,}]|\s*$)',
+        r'\1: "\2"',
+        raw,
+    )
+    # Handle bare list values: "good_with": children, cats -> "good_with": ["children", "cats"]
+    # Find key: val1, val2, val3 patterns where values aren't quoted/bracketed
+    raw = re.sub(
+        r'("[\w_]+")\s*:\s*"([a-zA-Z ]+(?:,\s*[a-zA-Z ]+)+)"',
+        lambda m: m.group(1) + ": " + '["' + '", "'.join(v.strip() for v in m.group(2).split(",")) + '"]',
+        raw,
+    )
+    return raw
+
+
 def _extract_filters(query: str) -> dict:
     """Run the LLM on the query and return a dict of extracted filter fields."""
     import json
     import re
+
+    VALID_KEYS = {"size", "gender", "fur", "weight", "age", "breed", "good_with", "bad_with"}
 
     prompt = _EXTRACTION_PROMPT.replace("<USER_QUERY>", query)
     tokenizer, model = _state.search_model
@@ -563,26 +586,40 @@ def _extract_filters(query: str) -> dict:
     raw = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
     logger.info(f"Search model raw output: {raw!r}")
 
-    # Try direct parse
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
+    def _try_parse(text: str) -> dict | None:
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict):
+                return {k: v for k, v in obj.items() if k in VALID_KEYS}
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return None
 
-    # Fall back: find the first {...} block (supports nested arrays/objects)
+    # Try direct parse
+    result = _try_parse(raw)
+    if result is not None:
+        return result
+
+    # Try with braces extracted
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
+        result = _try_parse(match.group())
+        if result is not None:
+            return result
 
-    # Fall back: wrap bare key-value output in braces (model sometimes omits {})
+    # Wrap bare output in braces
     if ":" in raw:
-        try:
-            return json.loads("{" + raw + "}")
-        except json.JSONDecodeError:
-            pass
+        result = _try_parse("{" + raw + "}")
+        if result is not None:
+            return result
+
+    # Fix malformed output (missing quotes, bare lists) then try all again
+    fixed = _fix_raw_output(raw)
+    logger.info(f"Search model fixed output: {fixed!r}")
+
+    result = _try_parse("{" + fixed + "}")
+    if result is not None:
+        return result
 
     return {}
 
