@@ -530,9 +530,9 @@ def get_dog(dog_id: int):
 
 #### POST /api/dogs/search
 
-# 2-shot extraction prompt
+# 3-shot extraction prompt
 _EXTRACTION_PROMPT = """\
-Extract dog search preferences from this text as JSON.
+Extract ALL dog search preferences from the text as a single JSON object. Include every attribute that is mentioned or clearly implied. Do not skip any.
 Valid fields and values:
 - size: small, medium, large, giant
 - gender: male, female
@@ -542,13 +542,15 @@ Valid fields and values:
 - breed: any breed name
 - good_with: list of e.g. children, elderly, cats, dogs
 - bad_with: list of e.g. children, cats, dogs
-Only include fields that are clearly mentioned or implied. Return only valid JSON.
 
 Text: "I'm looking for a big male dog with long fur, maybe a German Shepherd, that's good with elderly people but not with cats"
 JSON: {"size": "large", "gender": "male", "fur": "long", "breed": "German Shepherd", "good_with": ["elderly"], "bad_with": ["cats"]}
 
 Text: "We need a lightweight puppy for our apartment, preferably vaccinated and good with our two kids"
 JSON: {"weight": "light", "age": "puppy", "good_with": ["children"]}
+
+Text: "small female puppy that likes cats"
+JSON: {"size": "small", "gender": "female", "age": "puppy", "good_with": ["cats"]}
 
 Text: "<USER_QUERY>"
 JSON:"""
