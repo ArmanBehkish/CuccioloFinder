@@ -26,11 +26,27 @@ jobs:
           script: |
             cd /opt/cucciolofinder
             git pull origin main
-            docker compose --profile worker down
-            docker image rm cucciolofinder-worker || true
-            docker compose --profile worker build worker --no-cache
-            docker image prune -f
+
+            # Stop and remove target containers/images
+            if [ "${{ inputs.target }}" = "worker" ] || [ "${{ inputs.target }}" = "both" ]; then
+              docker compose --profile worker down
+              docker image rm cucciolofinder-worker 2>/dev/null || true
+            fi
             if [ "${{ inputs.target }}" = "api" ] || [ "${{ inputs.target }}" = "both" ]; then
+              docker compose down api
+              docker image rm cucciolofinder-api 2>/dev/null || true
+            fi
+
+            # Cleanup
+            docker system prune -a -f
+            docker builder prune -a -f
+
+            # Rebuild targets
+            if [ "${{ inputs.target }}" = "worker" ] || [ "${{ inputs.target }}" = "both" ]; then
+              docker compose --profile worker build worker --no-cache
+            fi
+            if [ "${{ inputs.target }}" = "api" ] || [ "${{ inputs.target }}" = "both" ]; then
+              docker compose build api --no-cache
               docker compose up -d api
             fi
             echo "Full deploy (${{ inputs.target }}) complete at $(date)"
