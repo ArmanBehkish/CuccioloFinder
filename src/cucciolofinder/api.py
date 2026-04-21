@@ -16,8 +16,11 @@ from sqlalchemy import Engine, text
 from .database.db import DEFAULT_DB_PATH, get_engine, get_session
 from .database.models import DogImage
 
-# 3B Param Model (float16 ~3GB), change in env if no mem
-SEARCH_MODEL_ID = os.environ.get("SEARCH_MODEL_ID", "google/flan-t5-xl")
+# Mistral 7B Instruct GGUF (4-bit quantized ~4.4GB)
+SEARCH_MODEL_PATH = os.environ.get(
+    "SEARCH_MODEL_PATH",
+    "data/models/mistral-7b-instruct-v0.3.Q4_K_M.gguf",
+)
 
 #### App state
 
@@ -45,20 +48,19 @@ def _probe_db() -> None:
 
 
 def _load_search_model() -> None:
-    """Blocking: load the T5 model and tokenizer directly (avoids pipeline task-name issues)."""
-    import torch
-    from pathlib import Path
-    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    """Blocking: load Mistral 7B GGUF via llama-cpp-python."""
+    from llama_cpp import Llama
 
-    models_dir = Path(os.environ.get("MODELS_PATH", "data/models"))
-    cache_dir = models_dir / SEARCH_MODEL_ID.replace("/", "--")
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    model_path = Path(SEARCH_MODEL_PATH)
+    if not model_path.exists():
+        raise FileNotFoundError(f"GGUF model not found at {model_path}")
 
-    tokenizer = AutoTokenizer.from_pretrained(SEARCH_MODEL_ID, cache_dir=str(cache_dir))
-    model = AutoModelForSeq2SeqLM.from_pretrained(
-        SEARCH_MODEL_ID, cache_dir=str(cache_dir), dtype=torch.float16,
+    _state.search_model = Llama(
+        model_path=str(model_path),
+        n_ctx=2048,
+        n_threads=2,
+        verbose=False,
     )
-    _state.search_model = (tokenizer, model)
     _state.search_model_ok = True
 
 
@@ -81,7 +83,7 @@ async def lifespan(app: FastAPI):
 
     try:
         await asyncio.to_thread(_load_search_model)
-        logger.info(f"Search model {SEARCH_MODEL_ID} loaded OK")
+        logger.info(f"Search model loaded OK: {SEARCH_MODEL_PATH}")
     except Exception as exc:
         logger.warning(f"Search model not loaded at startup: {exc}")
         _state.search_model_ok = False
@@ -530,56 +532,39 @@ def get_dog(dog_id: int):
 
 #### POST /api/dogs/search
 
-# 3-shot extraction prompt
+# Mistral instruct prompt — [INST] tags required by the model
 _EXTRACTION_PROMPT = """\
-You are given a text input from user describing the characteristics of a dog they are searching from a shelter. Your task as a dog expert is to process the text and extract the fields, and output a JSON with key names and values. The keys and their possible values are listed below.
-Include every attribute that is mentioned or implied. Do not skip any.
-For good_with and bad_with keys, the value/values should be returned inside a list (see the examples).
-They keys and values in the returned JSON should only come from the following list. I REPEAT, only use keys and values that are listed below. Don't invent any key/value that is not in the list below.
+[INST] You are a dog search assistant. Extract search filters from the user's text and return ONLY a JSON object. No explanation, no extra text.
+
 Valid keys and values:
 - size: small, medium, large, giant
 - gender: male, female
 - fur: short, medium, long
 - weight: light, medium, heavy
 - age: puppy, young, adult, senior
-- breed: 'German Shepherd', 'Golden Retriever', 'Doberman'
-- good_with: children, elderly, cats, dogs
-- bad_with: children, elderly, cats, dogs
+- breed: any breed name (e.g. "German Shepherd", "Golden Retriever")
+- good_with: list from: children, elderly, cats, dogs
+- bad_with: list from: children, elderly, cats, dogs
 
-Examples: 
+Rules:
+- Include every attribute that is mentioned or implied. Do not skip any.
+- If the user says "any" for a field, do NOT include that field.
+- "not good with X" means bad_with, NOT good_with.
+- good_with and bad_with values must be lists.
+- Return ONLY the JSON object, nothing else.
 
-Text: "I'm looking for a big male dog with long fur, maybe a German Shepherd, that's good with elderly people but not with cats"
-JSON: {"size": "large", "gender": "male", "fur": "long", "breed": "German Shepherd", "good_with": ["elderly"], "bad_with": ["cats"]}
+Examples:
 
-Text: "We need a lightweight puppy for our apartment, preferably vaccinated and good with our two kids and elderly"
-JSON: {"weight": "light", "age": "puppy", "good_with": ["children","elderly"]}
+Text: "big male dog with long fur, maybe a German Shepherd, good with elderly but not with cats"
+{"size": "large", "gender": "male", "fur": "long", "breed": "German Shepherd", "good_with": ["elderly"], "bad_with": ["cats"]}
+
+Text: "lightweight puppy good with kids and elderly"
+{"weight": "light", "age": "puppy", "good_with": ["children", "elderly"]}
 
 Text: "small female puppy that likes cats"
-JSON: {"size": "small", "gender": "female", "age": "puppy", "good_with": ["cats"]}
+{"size": "small", "gender": "female", "age": "puppy", "good_with": ["cats"]}
 
-Text: "<USER_QUERY>"
-JSON:"""
-
-
-def _fix_raw_output(raw: str) -> str:
-    """Best-effort fix of malformed model output into valid JSON."""
-    import re
-
-    # Add missing quotes around unquoted values: "key": value -> "key": "value"
-    # Handles: "gender": male  or  "fur": short
-    raw = re.sub(
-        r'("[\w_]+")\s*:\s*(?!"|\[)([a-zA-Z][a-zA-Z ]*?)(?=\s*[,}]|\s*$)',
-        r'\1: "\2"',
-        raw,
-    )
-    # Handle bare list values: "good_with": children, cats -> "good_with": ["children", "cats"]
-    # Find key: val1, val2, val3 patterns where values aren't quoted/bracketed
-    raw = re.sub(
-        r'("[\w_]+")\s*:\s*"([a-zA-Z ]+(?:,\s*[a-zA-Z ]+)+)"',
-        lambda m: m.group(1) + ": " + '["' + '", "'.join(v.strip() for v in m.group(2).split(",")) + '"]',
-        raw,
-    )
-    return raw
+Text: "<USER_QUERY>" [/INST]"""
 
 
 def _extract_filters(query: str) -> tuple[dict, str]:
@@ -590,10 +575,9 @@ def _extract_filters(query: str) -> tuple[dict, str]:
     VALID_KEYS = {"size", "gender", "fur", "weight", "age", "breed", "good_with", "bad_with"}
 
     prompt = _EXTRACTION_PROMPT.replace("<USER_QUERY>", query)
-    tokenizer, model = _state.search_model
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
-    outputs = model.generate(**inputs, max_new_tokens=128)
-    raw = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+    llm = _state.search_model
+    output = llm(prompt, max_tokens=200, stop=["\n\n"], temperature=0.0)
+    raw = output["choices"][0]["text"].strip()
     logger.info(f"Search model raw output: {raw!r}")
 
     def _try_parse(text: str) -> dict | None:
@@ -610,26 +594,12 @@ def _extract_filters(query: str) -> tuple[dict, str]:
     if result is not None:
         return result, raw
 
-    # Try with braces extracted
+    # Try extracting JSON from surrounding text
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
         result = _try_parse(match.group())
         if result is not None:
             return result, raw
-
-    # Wrap bare output in braces
-    if ":" in raw:
-        result = _try_parse("{" + raw + "}")
-        if result is not None:
-            return result, raw
-
-    # Fix malformed output (missing quotes, bare lists) then try all again
-    fixed = _fix_raw_output(raw)
-    logger.info(f"Search model fixed output: {fixed!r}")
-
-    result = _try_parse("{" + fixed + "}")
-    if result is not None:
-        return result, raw
 
     return {}, raw
 
@@ -752,10 +722,9 @@ def debug_prompt(req: DebugPromptRequest):
     """Temporary: send a raw prompt to the search model and return the raw output."""
     if not _state.search_model_ok:
         raise HTTPException(status_code=503, detail="Search model not available")
-    tokenizer, model = _state.search_model
-    inputs = tokenizer(req.prompt, return_tensors="pt", truncation=True, max_length=512)
-    outputs = model.generate(**inputs, max_new_tokens=200)
-    raw = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+    llm = _state.search_model
+    output = llm(req.prompt, max_tokens=200, stop=["\n\n"], temperature=0.0)
+    raw = output["choices"][0]["text"].strip()
     return {"raw_output": raw}
 
 

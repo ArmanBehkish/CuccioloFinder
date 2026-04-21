@@ -34,7 +34,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-docker = ["torch>=2.6.0"]
+docker = ["torch>=2.6.0", "llama-cpp-python>=0.3.0"]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"

@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 
 # System tools
-RUN apt-get update && apt-get install -y --no-install-recommends vim-tiny && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends vim-tiny build-essential cmake && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN groupadd -g 1000 appuser && useradd -u 1000 -g appuser -m appuser
