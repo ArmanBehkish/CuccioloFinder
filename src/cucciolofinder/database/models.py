@@ -19,6 +19,16 @@ class Base(DeclarativeBase):
     pass
 
 
+class Breed(Base):
+    __tablename__ = "breeds"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False, unique=True)
+    vit_label = Column(String, unique=True, nullable=True)
+
+    dogs = relationship("Dog", back_populates="breed_rel")
+
+
 class Dog(Base):
     __tablename__ = "dogs"
 
@@ -37,7 +47,7 @@ class Dog(Base):
     size = Column(String)
     size_en = Column(String)
     breed = Column(String)
-    breed_en = Column(String)
+    breed_en = Column(String, ForeignKey("breeds.name"), nullable=True)
     fur = Column(String)
     fur_en = Column(String)
     microchip = Column(String)
@@ -61,6 +71,7 @@ class Dog(Base):
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
+    breed_rel = relationship("Breed", back_populates="dogs")
     images = relationship("DogImage", back_populates="dog", cascade="all, delete-orphan")
     provenance = relationship(
         "FieldProvenance", back_populates="dog", cascade="all, delete-orphan"

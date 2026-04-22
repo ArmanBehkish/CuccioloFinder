@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,9 @@ SEARCH_MODEL_PATH = os.environ.get(
 
 #### App state
 
+WORKER_BUSY_TIMEOUT = 3 * 3600  # auto-clear after 3 hours
+
+
 @dataclass
 class AppState:
     db_ok: bool = False
@@ -32,6 +36,8 @@ class AppState:
     search_model: Any = None             # loaded model
     enums_cache: dict = field(default_factory=dict)
     stats_cache: dict = field(default_factory=dict)
+    worker_busy: bool = False
+    worker_busy_since: float = 0.0       # time.time() when set to busy
 
 
 _state = AppState()
@@ -454,6 +460,11 @@ class DogImageOut(BaseModel):
     position: int | None
 
 
+class BreedDetection(BaseModel):
+    breed: str
+    confidence: float
+
+
 class DogProfileOut(BaseModel):
     id: int
     name: str
@@ -464,7 +475,9 @@ class DogProfileOut(BaseModel):
     age_en: str | None
     size_en: str | None
     breed_en: str | None
-    breed_confidence: float | None
+    breed_from_image: list[BreedDetection] | None
+    breed_from_text: BreedDetection | None
+    breed_combined_confidence: float | None
     fur_en: str | None
     weight: str | None
     microchip_en: str | None
@@ -497,10 +510,31 @@ def get_dog(dog_id: int):
         if dog is None:
             raise HTTPException(status_code=404, detail=f"Dog {dog_id} not found")
 
-        breed_prov = session.execute(
-            select(FieldProvenance.confidence)
+        # Fetch all breed provenance records
+        breed_provs = session.execute(
+            select(FieldProvenance)
             .where(FieldProvenance.dog_id == dog_id, FieldProvenance.field_name == "breed_en")
-        ).scalar_one_or_none()
+        ).scalars().all()
+
+    # Build breed detection breakdown by method
+    prov_by_method = {p.method: p for p in breed_provs}
+
+    breed_from_image = None
+    img_1st = prov_by_method.get("image")
+    img_2nd = prov_by_method.get("image_2nd")
+    if img_1st:
+        entries = [BreedDetection(breed=img_1st.model_name, confidence=img_1st.confidence)]
+        if img_2nd:
+            entries.append(BreedDetection(breed=img_2nd.model_name, confidence=img_2nd.confidence))
+        breed_from_image = entries
+
+    breed_from_text = None
+    txt = prov_by_method.get("text")
+    if txt:
+        breed_from_text = BreedDetection(breed=txt.model_name, confidence=txt.confidence)
+
+    combined = prov_by_method.get("combined")
+    breed_combined_confidence = combined.confidence if combined else None
 
     return DogProfileOut(
         id=dog.id,
@@ -512,7 +546,9 @@ def get_dog(dog_id: int):
         age_en=dog.age_en,
         size_en=dog.size_en,
         breed_en=dog.breed_en,
-        breed_confidence=breed_prov,
+        breed_from_image=breed_from_image,
+        breed_from_text=breed_from_text,
+        breed_combined_confidence=breed_combined_confidence,
         fur_en=dog.fur_en,
         weight=dog.weight,
         microchip_en=dog.microchip_en,
@@ -567,6 +603,73 @@ Text: "small female puppy that likes cats"
 Text: "<USER_QUERY>" [/INST]"""
 
 
+_VALID_VALUES: dict[str, set[str]] = {
+    "size": {"small", "medium", "large", "giant"},
+    "gender": {"male", "female"},
+    "fur": {"short", "medium", "long"},
+    "weight": {"light", "medium", "heavy"},
+    "age": {"puppy", "young", "adult", "senior"},
+    "good_with": {"children", "elderly", "cats", "dogs"},
+    "bad_with": {"children", "elderly", "cats", "dogs"},
+}
+
+_STRIP_VALUES = {"any", "all", "none", "unknown", "n/a", ""}
+
+
+def _validate_breed(breed_input: str) -> str | None:
+    """Validate LLM-extracted breed against the breeds table.
+
+    Returns canonical name on exact or single partial match.
+    Returns None if no match, multiple matches, or sentinel value.
+    """
+    from .database.models import Breed
+
+    if not breed_input or breed_input.strip().lower() in _STRIP_VALUES | {"mixed", "mutt"}:
+        return None
+
+    engine = _state.engine or get_engine(DEFAULT_DB_PATH)
+    session_factory = get_session(engine)
+    with session_factory() as session:
+        exact = session.query(Breed).filter(Breed.name.ilike(breed_input.strip())).first()
+        if exact:
+            return exact.name
+        matches = session.query(Breed).filter(Breed.name.ilike(f"%{breed_input.strip()}%")).all()
+        if len(matches) == 1:
+            return matches[0].name
+    return None
+
+
+def _postprocess_filters(raw_filters: dict) -> dict:
+    """Validate and normalize LLM-extracted filters."""
+    cleaned: dict[str, Any] = {}
+
+    for key, value in raw_filters.items():
+        if key == "breed":
+            validated = _validate_breed(value if isinstance(value, str) else "")
+            if validated:
+                cleaned[key] = validated
+        elif key in ("good_with", "bad_with"):
+            valid_set = _VALID_VALUES[key]
+            if isinstance(value, str):
+                value = [value]
+            if isinstance(value, list):
+                filtered = [v.strip().lower() for v in value
+                            if isinstance(v, str) and v.strip().lower() in valid_set]
+                if filtered:
+                    cleaned[key] = filtered
+        elif key in _VALID_VALUES:
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in _STRIP_VALUES:
+                    continue
+                if normalized in _VALID_VALUES[key]:
+                    cleaned[key] = normalized
+        else:
+            cleaned[key] = value
+
+    return cleaned
+
+
 def _extract_filters(query: str) -> tuple[dict, str]:
     """Run the LLM on the query and return (extracted_filters, raw_output)."""
     import json
@@ -591,17 +694,16 @@ def _extract_filters(query: str) -> tuple[dict, str]:
 
     # Try direct parse
     result = _try_parse(raw)
-    if result is not None:
-        return result, raw
+    if result is None:
+        # Try extracting JSON from surrounding text
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            result = _try_parse(match.group())
 
-    # Try extracting JSON from surrounding text
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
-        result = _try_parse(match.group())
-        if result is not None:
-            return result, raw
+    if result is None:
+        return {}, raw
 
-    return {}, raw
+    return _postprocess_filters(result), raw
 
 
 class SearchRequest(BaseModel):
@@ -726,6 +828,68 @@ def debug_prompt(req: DebugPromptRequest):
     output = llm(req.prompt, max_tokens=200, stop=["\n\n"], temperature=0.0)
     raw = output["choices"][0]["text"].strip()
     return {"raw_output": raw}
+
+
+#### POST /api/translate/description
+
+_TRANSLATION_PROMPT = """\
+[INST] You are translating an Italian dog shelter adoption listing into English.
+
+Rules:
+- Translate the full text naturally, preserving the warm and hopeful tone typical of adoption listings.
+- Keep the meaning accurate but use natural English phrasing, not word-for-word translation.
+- Shelter-specific terms: "canile" = shelter, "box" = kennel, "adottabile" = available for adoption, "staffetta" = transport relay.
+- Preserve any names, dates, locations, and identification numbers exactly as written.
+- Return ONLY the English translation, nothing else.
+
+Italian text:
+{text}
+[/INST]"""
+
+
+class TranslateRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/translate/description")
+def translate_description(req: TranslateRequest):
+    """Translate Italian dog description to English using Mistral."""
+    if not _state.search_model_ok:
+        raise HTTPException(status_code=503, detail="Search model not available")
+
+    if not req.text or not req.text.strip():
+        return {"translation": ""}
+
+    prompt = _TRANSLATION_PROMPT.replace("{text}", req.text.strip())
+    llm = _state.search_model
+    output = llm(prompt, max_tokens=1500, stop=["[INST]"], temperature=0.2)
+    translation = output["choices"][0]["text"].strip()
+    return {"translation": translation}
+
+
+#### Worker status
+
+class WorkerStatusRequest(BaseModel):
+    busy: bool
+
+
+@app.post("/api/worker/status")
+def set_worker_status(req: WorkerStatusRequest):
+    """Called by worker to signal pipeline start/end."""
+    _state.worker_busy = req.busy
+    _state.worker_busy_since = time.time() if req.busy else 0.0
+    logger.info(f"Worker status: {'busy' if req.busy else 'ready'}")
+    return {"ok": True}
+
+
+@app.get("/api/worker/status")
+def get_worker_status():
+    """Check if worker pipeline is running. Auto-clears after timeout."""
+    if _state.worker_busy and (time.time() - _state.worker_busy_since) > WORKER_BUSY_TIMEOUT:
+        _state.worker_busy = False
+        _state.worker_busy_since = 0.0
+        logger.info("Worker busy status auto-cleared (timeout)")
+    return {"busy": _state.worker_busy}
 
 
 #### GET /api/health

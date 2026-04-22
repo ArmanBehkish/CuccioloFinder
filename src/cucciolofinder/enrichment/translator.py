@@ -129,26 +129,25 @@ class TranslationService:
         return [self.translate_field(v) for v in values]
 
     def translate_description(self, text: str) -> str:
-        """Translate long description text, splitting by sentence.
-        """
+        """Translate dog description using Mistral via the API container."""
         if not text or not text.strip():
             return ""
 
-        sentences = [s.strip() for s in text.replace("\n", ". ").split(".") if s.strip()]
+        import requests
 
-        translated_sentences = []
-        for sentence in sentences:
-            try:
-                translated = self.translate(sentence)
-
-                # Check if translation is just the original echoed back (API failure mode)
-                if translated.strip().lower() == sentence.strip().lower():
-                    logger.warning(f"Translation returned original text, aborting: '{sentence[:50]}...'")
-                    return ""  # Return empty so field stays NULL
-
-                translated_sentences.append(translated)
-            except Exception as e:
-                logger.warning(f"Failed to translate sentence: {e}")
+        api_url = os.environ.get("API_URL", "http://api:8000")
+        try:
+            resp = requests.post(
+                f"{api_url}/api/translate/description",
+                json={"text": text.strip()},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            translation = resp.json().get("translation", "")
+            if not translation:
+                logger.warning("Translation endpoint returned empty result")
                 return ""
-
-        return ". ".join(translated_sentences)
+            return translation
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Translation API call failed: {e}")
+            return ""

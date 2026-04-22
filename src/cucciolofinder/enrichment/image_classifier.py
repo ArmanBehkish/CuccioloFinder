@@ -64,12 +64,16 @@ def classify_breed(
     image_paths: list[Path],
     processor,
     model,
+    valid_labels: set[str] | None = None,
 ) -> list[tuple[str, float]]:
     """Classify breed from multiple images of the same dog.
 
     For each image, the top-3 predictions are collected.  Then across all
-    images the two breeds with the highest single-image probability are
-    returned (i.e. max probability per breed across images, top 2).
+    images the breeds with the highest single-image probability are ranked.
+
+    When *valid_labels* is provided, only labels in that set are kept.
+    Skipped labels are replaced by the next-highest valid one, so the
+    returned list always has up to 2 entries (unless fewer valid labels exist).
 
     Returns a list of up to 2 (breed_label, probability) tuples sorted by
     descending probability.  Returns an empty list when no images can be
@@ -92,4 +96,14 @@ def classify_breed(
         return []
 
     ranked = sorted(best.items(), key=lambda x: x[1], reverse=True)
-    return ranked[:2]
+
+    if valid_labels is None:
+        return ranked[:2]
+
+    result = []
+    for label, prob in ranked:
+        if label in valid_labels:
+            result.append((label, prob))
+            if len(result) == 2:
+                break
+    return result

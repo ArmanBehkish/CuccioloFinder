@@ -13,11 +13,24 @@ from cucciolofinder.scrapers.enpatorino import EnpaTorinoSpider
 from cucciolofinder.scrapers.canileoasi import CanileOasiSpider
 
 
+def _set_worker_status(api_url: str, busy: bool) -> None:
+    """Signal worker busy/ready to the API container."""
+    import requests
+    try:
+        requests.post(f"{api_url}/api/worker/status", json={"busy": busy}, timeout=10)
+    except Exception as exc:
+        logger.warning(f"Failed to set worker status: {exc}")
+
+
 if __name__ == "__main__":
 
 
-    # Scheduled production flow: 
+    # Scheduled production flow:
     # reset_translations() → scrape all spiders + pipelines → enrich_translations()
+
+    import os
+    api_url = os.environ.get("API_URL", "http://localhost:8000")
+    _set_worker_status(api_url, busy=True)
 
     engine = get_engine()
     init_db(engine)
@@ -58,9 +71,7 @@ if __name__ == "__main__":
 
     # Step 5: Notify running API to reload caches
     logger.info("Refreshing API caches...")
-    import os
     import requests
-    api_url = os.environ.get("API_URL", "http://localhost:8000")
     try:
         resp = requests.post(f"{api_url}/api/stats/refresh", timeout=30)
         resp.raise_for_status()
@@ -79,4 +90,6 @@ if __name__ == "__main__":
         logger.warning(f"API tests failed (exit code {result.returncode})")
     else:
         logger.info("API tests passed")
+
+    _set_worker_status(api_url, busy=False)
 

@@ -1,10 +1,11 @@
+import json
 import os
 from pathlib import Path
 
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from cucciolofinder.database import Dog, FieldProvenance
+from cucciolofinder.database import Breed, Dog, FieldProvenance
 
 from .translator import TranslationService
 
@@ -146,6 +147,7 @@ def _upsert_provenance(
 
 
 IMAGES_DIR = Path(os.environ.get("IMAGES_PATH", "data/images"))
+VIT_TO_AKC_JSON = Path(os.environ.get("VIT_TO_AKC_PATH", "data/datasets/vit_to_akc.json"))
 
 
 def enrich_breed_detection(session: Session) -> int:
@@ -184,6 +186,15 @@ def enrich_breed_detection(session: Session) -> int:
     logger.info("Building AKC breed index...")
     breed_names, akc_embeddings = build_akc_index(tokenizer, embed_model)
 
+    # --- load ViT→AKC mapping and valid breed set ---
+    vit_to_akc: dict[str, str] = {}
+    if VIT_TO_AKC_JSON.exists():
+        with open(VIT_TO_AKC_JSON, encoding="utf-8") as fh:
+            vit_to_akc = json.load(fh)
+    valid_vit_labels = set(vit_to_akc.keys())
+    valid_breeds = {b.name for b in session.query(Breed).all()}
+    logger.info(f"Breed validation: {len(vit_to_akc)} ViT mappings, {len(valid_breeds)} valid breeds")
+
     # --- iterate all dogs ---
     dogs = session.query(Dog).all()
     logger.info(f"Processing breed detection for {len(dogs)} dogs")
@@ -200,12 +211,18 @@ def enrich_breed_detection(session: Session) -> int:
             if img.local_path
         ]
         if image_paths:
-            image_breeds = classify_breed(image_paths, processor, img_model)
+            image_breeds_raw = classify_breed(image_paths, processor, img_model, valid_vit_labels)
+            # Resolve ViT labels to canonical AKC names
+            image_breeds = []
+            for label, prob in image_breeds_raw:
+                canonical = vit_to_akc.get(label)
+                if canonical and canonical in valid_breeds:
+                    image_breeds.append((canonical, prob))
             if image_breeds:
                 fmt = ", ".join(f"{b} ({p:.2f})" for b, p in image_breeds)
                 logger.info(f"  Image breeds: {fmt}")
             else:
-                logger.info("  Image breeds: classification failed")
+                logger.info("  Image breeds: classification failed or no valid mapping")
         else:
             logger.info("  Image breeds: no images available")
 
@@ -289,19 +306,16 @@ def enrich_breed_detection(session: Session) -> int:
             method = "text"
 
         # Merge all candidates into a single pool.
-        # Each candidate accumulates its image and text scores; the combined
-        # score is α × image_score + (1-α) × text_score.
+        # Both sources now use canonical AKC names, so keys match directly.
         candidates: dict[str, dict] = {}
 
         for breed, prob in image_breeds:
-            key = breed.strip().lower()
-            candidates.setdefault(key, {"image": 0.0, "text": 0.0, "name": breed})
-            candidates[key]["image"] = max(candidates[key]["image"], prob)
+            candidates.setdefault(breed, {"image": 0.0, "text": 0.0, "name": breed})
+            candidates[breed]["image"] = max(candidates[breed]["image"], prob)
 
         for breed, sim in text_breeds:
-            key = breed.strip().lower()
-            candidates.setdefault(key, {"image": 0.0, "text": 0.0, "name": breed})
-            candidates[key]["text"] = max(candidates[key]["text"], sim)
+            candidates.setdefault(breed, {"image": 0.0, "text": 0.0, "name": breed})
+            candidates[breed]["text"] = max(candidates[breed]["text"], sim)
 
         for info in candidates.values():
             info["combined"] = alpha * info["image"] + (1 - alpha) * info["text"]
@@ -311,14 +325,31 @@ def enrich_breed_detection(session: Session) -> int:
         )
         top = ranked[0]
 
-        # ---- 4. Store result in database ----
+        # ---- 4. Store result + breakdown in database ----
         dog.breed_en = top["name"]
+
+        # Store individual signal provenance for detail page breakdown
+        if has_image:
+            _upsert_provenance(
+                session, dog_id=dog.id, field_name="breed_en",
+                method="image", model_name=image_breeds[0][0],
+                confidence=image_breeds[0][1],
+            )
+            if len(image_breeds) > 1:
+                _upsert_provenance(
+                    session, dog_id=dog.id, field_name="breed_en",
+                    method="image_2nd", model_name=image_breeds[1][0],
+                    confidence=image_breeds[1][1],
+                )
+        if has_text:
+            _upsert_provenance(
+                session, dog_id=dog.id, field_name="breed_en",
+                method="text", model_name=text_breeds[0][0],
+                confidence=text_breeds[0][1],
+            )
         _upsert_provenance(
-            session,
-            dog_id=dog.id,
-            field_name="breed_en",
-            method=method,
-            model_name=f"α={alpha}",
+            session, dog_id=dog.id, field_name="breed_en",
+            method="combined", model_name=f"α={alpha}",
             confidence=top["combined"],
         )
 
