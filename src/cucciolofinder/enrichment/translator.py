@@ -137,6 +137,7 @@ class TranslationService:
 
         api_url = os.environ.get("API_URL", "http://api:8000")
         try:
+            logger.info(f"Sending description to API for translation ({len(text)} chars)")
             resp = requests.post(
                 f"{api_url}/api/translate/description",
                 json={"text": text.strip()},
@@ -147,6 +148,7 @@ class TranslationService:
             if not translation:
                 logger.warning("Translation endpoint returned empty result")
                 return ""
+            logger.info(f"Translation received ({len(translation)} chars): {translation[:200]}...")
             return translation
         except requests.exceptions.RequestException as e:
             logger.warning(f"Translation API call failed: {e}")

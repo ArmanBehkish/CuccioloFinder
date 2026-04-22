@@ -26,6 +26,7 @@ SEARCH_MODEL_PATH = os.environ.get(
 #### App state
 
 WORKER_BUSY_TIMEOUT = 3 * 3600  # auto-clear after 3 hours
+WORKER_STATUS_FILE = Path(os.environ.get("WORKER_STATUS_FILE", "data/.worker_busy"))
 
 
 @dataclass
@@ -36,8 +37,6 @@ class AppState:
     search_model: Any = None             # loaded model
     enums_cache: dict = field(default_factory=dict)
     stats_cache: dict = field(default_factory=dict)
-    worker_busy: bool = False
-    worker_busy_since: float = 0.0       # time.time() when set to busy
 
 
 _state = AppState()
@@ -860,10 +859,16 @@ def translate_description(req: TranslateRequest):
     if not req.text or not req.text.strip():
         return {"translation": ""}
 
+    logger.info(f"Translation request ({len(req.text)} chars): {req.text.strip()[:200]}...")
+
     prompt = _TRANSLATION_PROMPT.replace("{text}", req.text.strip())
     llm = _state.search_model
+    t0 = time.time()
     output = llm(prompt, max_tokens=1500, stop=["[INST]"], temperature=0.2)
+    elapsed = time.time() - t0
     translation = output["choices"][0]["text"].strip()
+
+    logger.info(f"Translation done in {elapsed:.1f}s ({len(translation)} chars): {translation[:200]}...")
     return {"translation": translation}
 
 
@@ -875,21 +880,30 @@ class WorkerStatusRequest(BaseModel):
 
 @app.post("/api/worker/status")
 def set_worker_status(req: WorkerStatusRequest):
-    """Called by worker to signal pipeline start/end."""
-    _state.worker_busy = req.busy
-    _state.worker_busy_since = time.time() if req.busy else 0.0
-    logger.info(f"Worker status: {'busy' if req.busy else 'ready'}")
+    """Called by worker to signal pipeline start/end. Persisted to file."""
+    if req.busy:
+        WORKER_STATUS_FILE.write_text(str(time.time()))
+        logger.info("Worker status: busy (file written)")
+    else:
+        WORKER_STATUS_FILE.unlink(missing_ok=True)
+        logger.info("Worker status: ready (file removed)")
     return {"ok": True}
 
 
 @app.get("/api/worker/status")
 def get_worker_status():
-    """Check if worker pipeline is running. Auto-clears after timeout."""
-    if _state.worker_busy and (time.time() - _state.worker_busy_since) > WORKER_BUSY_TIMEOUT:
-        _state.worker_busy = False
-        _state.worker_busy_since = 0.0
+    """Check if worker pipeline is running. Reads from file, auto-clears after timeout."""
+    if not WORKER_STATUS_FILE.exists():
+        return {"busy": False}
+    try:
+        busy_since = float(WORKER_STATUS_FILE.read_text().strip())
+    except (ValueError, OSError):
+        return {"busy": False}
+    if (time.time() - busy_since) > WORKER_BUSY_TIMEOUT:
+        WORKER_STATUS_FILE.unlink(missing_ok=True)
         logger.info("Worker busy status auto-cleared (timeout)")
-    return {"busy": _state.worker_busy}
+        return {"busy": False}
+    return {"busy": True}
 
 
 #### GET /api/health
