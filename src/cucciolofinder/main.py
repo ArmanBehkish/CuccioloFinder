@@ -39,10 +39,10 @@ if __name__ == "__main__":
     logger.info("Starting scraping...")
     process = CrawlerProcess()
     process.crawl(QuattroZampeSpider)
-    process.crawl(EmpethySpider)
-    process.crawl(AlberoDiMaisSpider)
-    process.crawl(EnpaTorinoSpider)
-    process.crawl(CanileOasiSpider)
+    # process.crawl(EmpethySpider)
+    # process.crawl(AlberoDiMaisSpider)
+    # process.crawl(EnpaTorinoSpider)
+    # process.crawl(CanileOasiSpider)
     process.start()
 
     # Step 2: Enrich translations

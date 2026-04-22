@@ -212,12 +212,16 @@ def enrich_breed_detection(session: Session) -> int:
         ]
         if image_paths:
             image_breeds_raw = classify_breed(image_paths, processor, img_model, valid_vit_labels)
+            if not image_breeds_raw:
+                logger.info(f"  Image breeds: classifier returned nothing (valid_vit_labels={len(valid_vit_labels)})")
             # Resolve ViT labels to canonical AKC names
             image_breeds = []
             for label, prob in image_breeds_raw:
                 canonical = vit_to_akc.get(label)
                 if canonical and canonical in valid_breeds:
                     image_breeds.append((canonical, prob))
+                else:
+                    logger.info(f"  Image label '{label}' → canonical='{canonical}', in valid_breeds={canonical in valid_breeds if canonical else 'N/A'}")
             if image_breeds:
                 fmt = ", ".join(f"{b} ({p:.2f})" for b, p in image_breeds)
                 logger.info(f"  Image breeds: {fmt}")

@@ -96,6 +96,7 @@ def classify_breed(
         return []
 
     ranked = sorted(best.items(), key=lambda x: x[1], reverse=True)
+    logger.info(f"  Raw ViT labels: {[(l, f'{p:.3f}') for l, p in ranked[:5]]}")
 
     if valid_labels is None:
         return ranked[:2]
@@ -106,4 +107,6 @@ def classify_breed(
             result.append((label, prob))
             if len(result) == 2:
                 break
+    if not result and ranked:
+        logger.info(f"  No label matched valid_vit_labels ({len(valid_labels)} entries). Top raw: {ranked[0][0]!r}")
     return result

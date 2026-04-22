@@ -22,6 +22,9 @@ class QuattroZampeSpider(scrapy.Spider):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.seen_names: dict[str, int] = {}
+        # TODO: remove after testing — limits number of dogs scraped
+        self.scrape_limit = int(os.environ.get("SCRAPE_LIMIT", 0))
+        self.scraped_count = 0
 
     def _unique_name(self, name: str) -> str:
         """Take care of repetitive names."""
@@ -38,9 +41,13 @@ class QuattroZampeSpider(scrapy.Spider):
         dog_cards = response.xpath("/html/body/div[1]/section[2]/div/div[3]/div/div/div/div/article")
 
         for card in dog_cards:
+            # TODO: remove after testing — stop early when limit reached
+            if self.scrape_limit and self.scraped_count >= self.scrape_limit:
+                return
             inside_link = card.css("a::attr(href)").get()
             if "torino" in str(inside_link):
                 self.pages.add(inside_link)
+                self.scraped_count += 1
                 yield response.follow(inside_link, callback=self.parse_dog_detail)
 
         # next page on regular HTML pagination
