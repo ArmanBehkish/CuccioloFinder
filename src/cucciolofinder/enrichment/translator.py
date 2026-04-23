@@ -230,7 +230,7 @@ class TranslationService:
                 resp = requests.post(
                     f"{api_url}/api/translate/description",
                     json={"text": text},
-                    timeout=120,
+                    timeout=180,
                 )
                 resp.raise_for_status()
                 translation = resp.json().get("translation", "")
