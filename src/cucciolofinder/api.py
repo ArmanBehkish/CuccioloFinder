@@ -871,6 +871,8 @@ Rules:
 - Shelter-specific terms: "canile" = shelter, "box" = kennel, "adottabile" = available for adoption, "staffetta" = transport relay.
 - Preserve any names, dates, locations, and identification numbers exactly as written.
 - Return ONLY the English translation, nothing else.
+- Do NOT add notes, comments, explanations, or repeat the translation.
+- Do NOT prefix with "Translation:" or similar headers.
 
 Italian text:
 {text}
@@ -892,10 +894,12 @@ def translate_description(req: TranslateRequest):
 
     logger.info(f"Translation request ({len(req.text)} chars): {req.text.strip()[:200]}...")
 
-    prompt = _TRANSLATION_PROMPT.replace("{text}", req.text.strip())
+    text = req.text.strip()
+    prompt = _TRANSLATION_PROMPT.replace("{text}", text)
     llm = _state.search_model
+    max_tokens = max(50, len(text) // 3)
     t0 = time.time()
-    output = llm(prompt, max_tokens=1500, stop=["[INST]"], temperature=0.2)
+    output = llm(prompt, max_tokens=max_tokens, stop=["[INST]"], temperature=0.2, repeat_penalty=1.3)
     elapsed = time.time() - t0
     translation = output["choices"][0]["text"].strip()
 
