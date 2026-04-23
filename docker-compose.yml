@@ -42,4 +42,4 @@ services:
       resources:
         limits:
           cpus: '2'
-          memory: 2500M
+          memory: 3000M

@@ -128,28 +128,42 @@ class TranslationService:
             return None
         return [self.translate_field(v) for v in values]
 
-    def translate_description(self, text: str) -> str:
-        """Translate dog description using Mistral via the API container."""
+    def translate_description(self, text: str, max_retries: int = 3) -> str:
+        """Translate dog description using Mistral via the API container.
+
+        Retries with exponential backoff when the API is unreachable
+        (e.g. OOM restart). Waits 30s, 60s, 120s between attempts.
+        """
         if not text or not text.strip():
             return ""
+
+        import time
 
         import requests
 
         api_url = os.environ.get("API_URL", "http://api:8000")
-        try:
-            logger.info(f"Sending description to API for translation ({len(text)} chars)")
-            resp = requests.post(
-                f"{api_url}/api/translate/description",
-                json={"text": text.strip()},
-                timeout=120,
-            )
-            resp.raise_for_status()
-            translation = resp.json().get("translation", "")
-            if not translation:
-                logger.warning("Translation endpoint returned empty result")
-                return ""
-            logger.info(f"Translation received ({len(translation)} chars): {translation[:200]}...")
-            return translation
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Translation API call failed: {e}")
-            return ""
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"Sending description to API for translation ({len(text)} chars) [attempt {attempt}/{max_retries}]")
+                resp = requests.post(
+                    f"{api_url}/api/translate/description",
+                    json={"text": text.strip()},
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                translation = resp.json().get("translation", "")
+                if not translation:
+                    logger.warning("Translation endpoint returned empty result")
+                    return ""
+                logger.info(f"Translation received ({len(translation)} chars): {translation[:200]}...")
+                return translation
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Translation API call failed (attempt {attempt}/{max_retries}): {e}")
+                if attempt < max_retries:
+                    wait = 30 * (2 ** (attempt - 1))  # 30s, 60s, 120s
+                    logger.info(f"Retrying in {wait}s (API may be restarting)...")
+                    time.sleep(wait)
+
+        logger.error("Translation failed after all retries, returning empty")
+        return ""
