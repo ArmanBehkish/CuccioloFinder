@@ -50,8 +50,6 @@ def _reconnect_db() -> bool:
     Returns True if the DB is now reachable, False otherwise.
     """
     try:
-        if _state.engine:
-            _state.engine.dispose()
         _state.engine = get_engine(DEFAULT_DB_PATH)
         SessionLocal = get_session(_state.engine)
         with SessionLocal() as session:
@@ -87,12 +85,6 @@ def _load_search_model() -> None:
     _state.search_model_ok = True
 
 
-def _dispose_engine() -> None:
-    """Blocking: close all connections in the pool."""
-    if _state.engine is not None:
-        _state.engine.dispose()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """only for context manager send blockings to threads"""
@@ -120,9 +112,6 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    await asyncio.to_thread(_dispose_engine)
-    logger.info("DB connection pool disposed")
-
     if _state.search_model is not None:
         _state.search_model = None
         _state.search_model_ok = False

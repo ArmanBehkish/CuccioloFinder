@@ -7,6 +7,7 @@ from loguru import logger
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from .models import Base, Breed, Dog, FieldProvenance
 
@@ -24,7 +25,7 @@ TRANSLATION_FIELDS_EN = [
 
 def get_engine(db_path: Path = DEFAULT_DB_PATH) -> Engine:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(f"sqlite:///{db_path}", echo=False)
+    return create_engine(f"sqlite:///{db_path}", echo=False, poolclass=NullPool)
 
 
 def populate_breeds(engine: Engine) -> int:
