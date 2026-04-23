@@ -10,6 +10,15 @@ from .pipelines import AlberoDiMaisPipeline
 
 class AlberoDiMaisSpider(scrapy.Spider):
     name = "AlberoDiMaisSpider"
+    seen_names: dict[str, int] = {}
+
+    def _unique_name(self, name: str) -> str:
+        """Take care of repetitive names."""
+        if name in self.seen_names:
+            self.seen_names[name] += 1
+            return f"{name}__{self.seen_names[name]:02d}"
+        self.seen_names[name] = 1
+        return name
     custom_settings = {
         "ITEM_PIPELINES": {
             "cucciolofinder.scrapers.pipelines.AlberoDiMaisPipeline": 1,
@@ -37,7 +46,8 @@ class AlberoDiMaisSpider(scrapy.Spider):
 
        
     def parse_dog_detail(self, response):
-        name = response.css("h2::text").get()
+        raw_name = response.css("h2::text").get()
+        name = self._unique_name(raw_name.strip()) if raw_name else None
         # gender is an icon
         gender_class = response.css("i.fas::attr(class)").get()
         if gender_class:

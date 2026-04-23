@@ -9,6 +9,15 @@ from cucciolofinder.config import SHELTER_SITES
 
 class EmpethySpider(scrapy.Spider):
     name = "EmpethySpider"
+    seen_names: dict[str, int] = {}
+
+    def _unique_name(self, name: str) -> str:
+        """Take care of repetitive names."""
+        if name in self.seen_names:
+            self.seen_names[name] += 1
+            return f"{name}__{self.seen_names[name]:02d}"
+        self.seen_names[name] = 1
+        return name
     custom_settings = {
         "ITEM_PIPELINES": {
             "cucciolofinder.scrapers.pipelines.EmpethyPipeline": 1,
@@ -70,7 +79,7 @@ class EmpethySpider(scrapy.Spider):
         # Name
         name = response.css("h2.font-semibold::text").get()
         if name:
-            name = name.strip()
+            name = self._unique_name(name.strip())
 
         # Images - only from the photo grid container
         images = response.css("div.grid-cols-4 img[src*='supabase']::attr(src)").getall()

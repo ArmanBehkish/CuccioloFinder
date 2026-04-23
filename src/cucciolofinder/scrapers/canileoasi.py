@@ -46,7 +46,7 @@ class CanileOasiSpider(scrapy.Spider):
         """Take care of repetitive names."""
         if name in self.seen_names:
             self.seen_names[name] += 1
-            return f"{name}#{self.seen_names[name]:02d}"
+            return f"{name}__{self.seen_names[name]:02d}"
         self.seen_names[name] = 1
         return name
 
