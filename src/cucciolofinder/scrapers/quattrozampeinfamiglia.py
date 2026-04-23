@@ -38,7 +38,9 @@ class QuattroZampeSpider(scrapy.Spider):
         yield scrapy.Request(url=self.start_url, callback=self.parse)
 
     def parse(self, response):
-        dog_cards = response.xpath("/html/body/div[1]/section[2]/div/div[3]/div/div/div/div/article")
+        # Old selector (site redesigned ~2026-04):
+        # dog_cards = response.xpath("/html/body/div[1]/section[2]/div/div[3]/div/div/div/div/article")
+        dog_cards = response.css("article.wdo-pt-slide")
 
         for card in dog_cards:
             # TODO: remove after testing — stop early when limit reached
@@ -50,10 +52,10 @@ class QuattroZampeSpider(scrapy.Spider):
                 self.scraped_count += 1
                 yield response.follow(inside_link, callback=self.parse_dog_detail)
 
-        # next page on regular HTML pagination
-        next_page = response.xpath("//a[contains(@class, 'next')]/@href").get()
-        if next_page:
-            yield response.follow(next_page, callback=self.parse)
+        # Old pagination (site now uses AJAX "Load More"):
+        # next_page = response.xpath("//a[contains(@class, 'next')]/@href").get()
+        # if next_page:
+        #     yield response.follow(next_page, callback=self.parse)
 
     def parse_dog_detail(self, response):
 
