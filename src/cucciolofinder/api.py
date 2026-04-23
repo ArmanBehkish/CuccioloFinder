@@ -44,18 +44,15 @@ _state = AppState()
 ##### Startup / shutdown
 
 def _reconnect_db() -> bool:
-    """Dispose old engine, create a fresh one, verify tables exist.
+    """Dispose old engine, create a fresh one, verify tables are reachable.
 
     Called by _probe_db at startup and by endpoints that detect a broken DB.
     Returns True if the DB is now reachable, False otherwise.
     """
-    from .database.db import init_db
-
     try:
         if _state.engine:
             _state.engine.dispose()
         _state.engine = get_engine(DEFAULT_DB_PATH)
-        init_db(_state.engine)
         SessionLocal = get_session(_state.engine)
         with SessionLocal() as session:
             session.execute(text("SELECT 1 FROM dogs LIMIT 1"))
@@ -161,9 +158,15 @@ def _reload_caches() -> int:
     from .enrichment.profile_builder import normalize_age, normalize_weight
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
+    # TODO: remove debug logging after cache issue is resolved
+    logger.info(f"_reload_caches: engine={engine.url}, _state.engine set={_state.engine is not None}")
     SessionLocal = get_session(engine)
 
     with SessionLocal() as session:
+        # TODO: remove debug logging after cache issue is resolved
+        raw_count = session.execute(text("SELECT COUNT(*) FROM dogs")).scalar()
+        logger.info(f"_reload_caches: raw SQL count={raw_count}")
+
         # enums cache
         enums: dict = {}
 
@@ -249,6 +252,8 @@ def _reload_caches() -> int:
 
         # stats cache
         dogs_rows = session.execute(select(Dog)).scalars().all()
+        # TODO: remove debug logging after cache issue is resolved
+        logger.info(f"_reload_caches: ORM dog count={len(dogs_rows)}")
 
         dog_list = []
         for dog in dogs_rows:
