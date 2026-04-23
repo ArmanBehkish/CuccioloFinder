@@ -43,13 +43,34 @@ _state = AppState()
 
 ##### Startup / shutdown
 
+def _reconnect_db() -> bool:
+    """Dispose old engine, create a fresh one, verify tables exist.
+
+    Called by _probe_db at startup and by endpoints that detect a broken DB.
+    Returns True if the DB is now reachable, False otherwise.
+    """
+    from .database.db import init_db
+
+    try:
+        if _state.engine:
+            _state.engine.dispose()
+        _state.engine = get_engine(DEFAULT_DB_PATH)
+        init_db(_state.engine)
+        SessionLocal = get_session(_state.engine)
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1 FROM dogs LIMIT 1"))
+        _state.db_ok = True
+        return True
+    except Exception as exc:
+        logger.warning(f"DB reconnection failed: {exc}")
+        _state.db_ok = False
+        return False
+
+
 def _probe_db() -> None:
-    """Blocking: create engine, run a trivial query to confirm DB is reachable."""
-    _state.engine = get_engine(DEFAULT_DB_PATH)
-    SessionLocal = get_session(_state.engine)
-    with SessionLocal() as session:
-        session.execute(text("SELECT 1"))
-    _state.db_ok = True
+    """Blocking: create engine, verify DB is reachable and tables exist."""
+    if not _reconnect_db():
+        raise RuntimeError("DB unreachable at startup")
 
 
 def _load_search_model() -> None:
@@ -299,12 +320,22 @@ def stats_refresh():
     from datetime import datetime, timezone
 
     if not _state.db_ok:
-        raise HTTPException(status_code=503, detail="Database unreachable")
+        logger.info("DB marked unreachable, attempting reconnection...")
+        if not _reconnect_db():
+            raise HTTPException(status_code=503, detail="Database unreachable")
+        logger.info("DB reconnection successful")
 
     try:
         total = _reload_caches()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Cache reload failed: {exc}") from exc
+        # DB may have gone bad since last check — try reconnecting once
+        logger.warning(f"Cache reload failed ({exc}), attempting DB reconnection...")
+        if not _reconnect_db():
+            raise HTTPException(status_code=503, detail="Database unreachable after reconnection attempt") from exc
+        try:
+            total = _reload_caches()
+        except Exception as exc2:
+            raise HTTPException(status_code=500, detail=f"Cache reload failed after reconnection: {exc2}") from exc2
 
     return {
         "status": "ok",
@@ -910,16 +941,20 @@ def get_worker_status():
 
 @app.get("/api/health")
 def health():
-    """Health check: server + DB + search model readiness."""
+    """Health check: server + DB tables + search model readiness.
+
+    If the DB is unreachable, attempts to reconnect so the API can
+    self-heal after OOM restarts.
+    """
     db_ok = False
     try:
         engine = _state.engine or get_engine(DEFAULT_DB_PATH)
         SessionLocal = get_session(engine)
         with SessionLocal() as session:
-            session.execute(text("SELECT 1"))
+            session.execute(text("SELECT 1 FROM dogs LIMIT 1"))
         db_ok = True
     except Exception:
-        db_ok = False
+        db_ok = _reconnect_db()
 
     _state.db_ok = db_ok
 
