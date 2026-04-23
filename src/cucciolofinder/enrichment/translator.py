@@ -128,54 +128,75 @@ class TranslationService:
             return None
         return [self.translate_field(v) for v in values]
 
-    _CHUNK_LIMIT = 900
+    _CHUNK_LIMIT = 800
 
-    def _split_description(self, text: str) -> list[str]:
-        """Split a long description into two roughly equal parts.
+    def _find_best_boundary(self, text: str, target: int, search_range: int) -> int:
+        """Find the best split point near target within ±search_range.
 
-        Looks for a newline or sentence boundary (. ! ?) near the middle.
-        Falls back to splitting at the nearest space if no boundary is found.
+        Priority: newline > sentence boundary (. ! ?) > space > exact target.
         """
-        if len(text) <= self._CHUNK_LIMIT:
-            return [text]
+        left = max(0, target - search_range)
+        right = min(len(text), target + search_range)
 
-        mid = len(text) // 2
-        search_range = len(text) // 4  # look within ±25% of the middle
-        left = mid - search_range
-        right = mid + search_range
-
-        # Priority 1: newline nearest to middle
+        # Priority 1: newline nearest to target
         best = None
         for i in range(left, right):
             if text[i] == "\n":
-                if best is None or abs(i - mid) < abs(best - mid):
+                if best is None or abs(i - target) < abs(best - target):
                     best = i
 
-        # Priority 2: sentence boundary (. ! ?) nearest to middle
+        # Priority 2: sentence boundary (. ! ?) nearest to target
         if best is None:
             for i in range(left, right):
                 if text[i] in ".!?" and i + 1 < len(text) and text[i + 1] == " ":
-                    if best is None or abs(i - mid) < abs(best - mid):
+                    if best is None or abs(i - target) < abs(best - target):
                         best = i + 1  # include the punctuation
 
         # Fallback: nearest space
         if best is None:
             for i in range(left, right):
                 if text[i] == " ":
-                    if best is None or abs(i - mid) < abs(best - mid):
+                    if best is None or abs(i - target) < abs(best - target):
                         best = i
 
-        if best is None:
-            best = mid
+        return best if best is not None else target
 
-        part1 = text[:best].strip()
-        part2 = text[best:].strip()
-        return [p for p in (part1, part2) if p]
+    def _split_description(self, text: str) -> list[str]:
+        """Split a long description into chunks of at most ~800 chars each.
+
+        Determines the number of chunks needed, then finds the best
+        boundary (newline, sentence, space) near each split point.
+        """
+        if len(text) <= self._CHUNK_LIMIT:
+            return [text]
+
+        import math
+        num_chunks = math.ceil(len(text) / self._CHUNK_LIMIT)
+        chunk_size = len(text) / num_chunks
+        search_range = int(chunk_size * 0.25)  # look within ±25% of each split point
+
+        chunks = []
+        start = 0
+        for i in range(1, num_chunks):
+            target = int(i * chunk_size)
+            boundary = self._find_best_boundary(text, target, search_range)
+            chunk = text[start:boundary].strip()
+            if chunk:
+                chunks.append(chunk)
+            start = boundary
+
+        # Last chunk
+        last = text[start:].strip()
+        if last:
+            chunks.append(last)
+
+        return chunks
 
     def translate_description(self, text: str, max_retries: int = 3) -> str:
         """Translate dog description using Mistral via the API container.
 
-        Splits descriptions longer than 900 chars into two parts,
+        Splits descriptions longer than 800 chars into multiple chunks
+        (each ~800 chars max, cut at sentence/newline boundaries),
         translates each separately, and combines the results.
         Retries with backoff when the API is unreachable (e.g. OOM restart).
         """
