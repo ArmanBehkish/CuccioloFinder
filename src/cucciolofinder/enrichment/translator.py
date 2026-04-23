@@ -128,15 +128,75 @@ class TranslationService:
             return None
         return [self.translate_field(v) for v in values]
 
+    _CHUNK_LIMIT = 900
+
+    def _split_description(self, text: str) -> list[str]:
+        """Split a long description into two roughly equal parts.
+
+        Looks for a newline or sentence boundary (. ! ?) near the middle.
+        Falls back to splitting at the nearest space if no boundary is found.
+        """
+        if len(text) <= self._CHUNK_LIMIT:
+            return [text]
+
+        mid = len(text) // 2
+        search_range = len(text) // 4  # look within ±25% of the middle
+        left = mid - search_range
+        right = mid + search_range
+
+        # Priority 1: newline nearest to middle
+        best = None
+        for i in range(left, right):
+            if text[i] == "\n":
+                if best is None or abs(i - mid) < abs(best - mid):
+                    best = i
+
+        # Priority 2: sentence boundary (. ! ?) nearest to middle
+        if best is None:
+            for i in range(left, right):
+                if text[i] in ".!?" and i + 1 < len(text) and text[i + 1] == " ":
+                    if best is None or abs(i - mid) < abs(best - mid):
+                        best = i + 1  # include the punctuation
+
+        # Fallback: nearest space
+        if best is None:
+            for i in range(left, right):
+                if text[i] == " ":
+                    if best is None or abs(i - mid) < abs(best - mid):
+                        best = i
+
+        if best is None:
+            best = mid
+
+        part1 = text[:best].strip()
+        part2 = text[best:].strip()
+        return [p for p in (part1, part2) if p]
+
     def translate_description(self, text: str, max_retries: int = 3) -> str:
         """Translate dog description using Mistral via the API container.
 
-        Retries with exponential backoff when the API is unreachable
-        (e.g. OOM restart). Waits 30s, 60s, 120s between attempts.
+        Splits descriptions longer than 900 chars into two parts,
+        translates each separately, and combines the results.
+        Retries with backoff when the API is unreachable (e.g. OOM restart).
         """
         if not text or not text.strip():
             return ""
 
+        chunks = self._split_description(text.strip())
+        logger.info(f"Description ({len(text)} chars) split into {len(chunks)} chunk(s): {[len(c) for c in chunks]}")
+
+        translated_parts = []
+        for i, chunk in enumerate(chunks):
+            result = self._translate_chunk(chunk, chunk_index=i + 1, total_chunks=len(chunks), max_retries=max_retries)
+            if not result:
+                logger.warning(f"Chunk {i + 1}/{len(chunks)} translation failed, returning empty")
+                return ""
+            translated_parts.append(result)
+
+        return "\n\n".join(translated_parts)
+
+    def _translate_chunk(self, text: str, chunk_index: int, total_chunks: int, max_retries: int) -> str:
+        """Translate a single chunk with retries."""
         import time
 
         import requests
@@ -145,25 +205,25 @@ class TranslationService:
 
         for attempt in range(1, max_retries + 1):
             try:
-                logger.info(f"Sending description to API for translation ({len(text)} chars) [attempt {attempt}/{max_retries}]")
+                logger.info(f"Sending chunk {chunk_index}/{total_chunks} ({len(text)} chars) [attempt {attempt}/{max_retries}]")
                 resp = requests.post(
                     f"{api_url}/api/translate/description",
-                    json={"text": text.strip()},
+                    json={"text": text},
                     timeout=120,
                 )
                 resp.raise_for_status()
                 translation = resp.json().get("translation", "")
                 if not translation:
-                    logger.warning("Translation endpoint returned empty result")
+                    logger.warning(f"Chunk {chunk_index}/{total_chunks}: endpoint returned empty")
                     return ""
-                logger.info(f"Translation received ({len(translation)} chars): {translation[:200]}...")
+                logger.info(f"Chunk {chunk_index}/{total_chunks} translated ({len(translation)} chars)")
                 return translation
             except requests.exceptions.RequestException as e:
-                logger.warning(f"Translation API call failed (attempt {attempt}/{max_retries}): {e}")
+                logger.warning(f"Chunk {chunk_index}/{total_chunks} failed (attempt {attempt}/{max_retries}): {e}")
                 if attempt < max_retries:
-                    wait = 30 * (2 ** (attempt - 1))  # 30s, 60s, 120s
+                    wait = (45, 60, 90)[attempt - 1]
                     logger.info(f"Retrying in {wait}s (API may be restarting)...")
                     time.sleep(wait)
 
-        logger.error("Translation failed after all retries, returning empty")
+        logger.error(f"Chunk {chunk_index}/{total_chunks} failed after all retries")
         return ""
