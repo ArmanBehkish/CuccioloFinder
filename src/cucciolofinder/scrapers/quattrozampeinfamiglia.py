@@ -32,7 +32,7 @@ class QuattroZampeSpider(scrapy.Spider):
             let clicks = 0;
             while (clicks < 50) {
                 const btn = [...document.querySelectorAll('a, button')].find(
-                    el => el.textContent.trim().toLowerCase().includes('Vedi altri')
+                    el => el.textContent.trim().toLowerCase().includes('vedi altri')
                 );
                 if (!btn) break;
                 btn.click();
@@ -76,7 +76,7 @@ class QuattroZampeSpider(scrapy.Spider):
 
         for card in dog_cards:
             inside_link = card.css("a::attr(href)").get()
-            if "torino" in str(inside_link):
+            if inside_link:
                 self.pages.add(inside_link)
                 yield response.follow(inside_link, callback=self.parse_dog_detail)
 
