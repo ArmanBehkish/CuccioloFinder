@@ -1,3 +1,4 @@
+import hashlib
 import re
 from datetime import datetime
 from urllib.parse import unquote
@@ -8,9 +9,19 @@ from scrapy.pipelines.images import ImagesPipeline
 from cucciolofinder.database import Dog, DogImage, get_engine, get_session, init_db
 
 
+def _stable_dog_id(source_url: str) -> str:
+    """Derive a short, stable identifier from source_url for image file naming.
+
+    Using source_url (unique per dog, never changes) instead of the dog name
+    avoids image cache collisions when _unique_name assigns different suffixes
+    across scrape runs due to non-deterministic processing order.
+    """
+    return hashlib.md5(source_url.encode()).hexdigest()[:12]
+
+
 class QuattroImagesPipeline(ImagesPipeline):
     def file_path(self, request, response=None, info=None, *, item=None):
-        dog_name = item.get("name", "unknown").replace(" ", "_")
+        dog_id = _stable_dog_id(item.get("source_url", "unknown"))
         ext = request.url.split("?")[0].split(".")[-1]
         decoded_url = unquote(request.url)
         image_urls = item.get("image_urls", [])
@@ -20,26 +31,26 @@ class QuattroImagesPipeline(ImagesPipeline):
         except ValueError:
             image_index = hash(request.url) % 10000
 
-        return f"QuattroZampe_{dog_name}_{image_index}.{ext}"
-    
+        return f"QuattroZampe_{dog_id}_{image_index}.{ext}"
+
 class AlberoDiMaisPipeline(ImagesPipeline):
     def file_path(self, request, response=None, info=None, *, item=None):
-        dog_name = item.get("name", "unknown").replace(" ", "_")
+        dog_id = _stable_dog_id(item.get("source_url", "unknown"))
         # Google Cloud Storage URL
         ext = "jpg"
         image_urls = item.get("image_urls", [])
-        
+
         try:
             image_index = image_urls.index(request.url)
         except ValueError:
             image_index = hash(request.url) % 10000
 
-        return f"AlberoDiMais_{dog_name}_{image_index}.{ext}"
+        return f"AlberoDiMais_{dog_id}_{image_index}.{ext}"
 
 
 class EmpethyPipeline(ImagesPipeline):
     def file_path(self, request, response=None, info=None, *, item=None):
-        dog_name = item.get("name", "unknown").replace(" ", "_")
+        dog_id = _stable_dog_id(item.get("source_url", "unknown"))
         # Supabase URLs have no file extension
         ext = "jpg"
         image_urls = item.get("image_urls", [])
@@ -49,12 +60,12 @@ class EmpethyPipeline(ImagesPipeline):
         except ValueError:
             image_index = hash(request.url) % 10000
 
-        return f"Empethy_{dog_name}_{image_index}.{ext}"
-    
+        return f"Empethy_{dog_id}_{image_index}.{ext}"
+
 
 class EnpaTorinoPipeline(ImagesPipeline):
     def file_path(self, request, response=None, info=None, *, item=None):
-        dog_name = item.get("name", "unknown").replace(" ", "_")
+        dog_id = _stable_dog_id(item.get("source_url", "unknown"))
         ext = request.url.split("?")[0].split(".")[-1] or "jpg"
         image_urls = item.get("image_urls", [])
 
@@ -63,12 +74,12 @@ class EnpaTorinoPipeline(ImagesPipeline):
         except ValueError:
             image_index = hash(request.url) % 10000
 
-        return f"EnpaTorino_{dog_name}_{image_index}.{ext}"
+        return f"EnpaTorino_{dog_id}_{image_index}.{ext}"
 
 
 class CanileOasiPipeline(ImagesPipeline):
     def file_path(self, request, response=None, info=None, *, item=None):
-        dog_name = item.get("name", "unknown").replace(" ", "_")
+        dog_id = _stable_dog_id(item.get("source_url", "unknown"))
         ext = request.url.split("?")[0].split(".")[-1] or "jpg"
         image_urls = item.get("image_urls", [])
 
@@ -77,7 +88,7 @@ class CanileOasiPipeline(ImagesPipeline):
         except ValueError:
             image_index = hash(request.url) % 10000
 
-        return f"CanileOasi_{dog_name}_{image_index}.{ext}"
+        return f"CanileOasi_{dog_id}_{image_index}.{ext}"
 
 
 SPIDER_SOURCE_MAP = {
