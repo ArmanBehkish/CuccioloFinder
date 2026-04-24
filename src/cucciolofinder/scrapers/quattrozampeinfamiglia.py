@@ -2,6 +2,7 @@ import os
 
 import scrapy
 from loguru import logger
+from scrapy_playwright.page import PageMethod
 
 from cucciolofinder.config import SHELTER_SITES
 from .pipelines import QuattroImagesPipeline
@@ -15,16 +16,35 @@ class QuattroZampeSpider(scrapy.Spider):
             "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
         },
         "IMAGES_STORE": os.environ.get("IMAGES_PATH", "data/images"),
+        "DOWNLOAD_HANDLERS": {
+            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+        },
+        "TWISTED_REACTOR": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
     }
     start_url = SHELTER_SITES["quattrozampeinfamiglia"].url
     pages = set()
 
+    # JS to click "Vedi altri animali" until all dogs are loaded
+    LOAD_ALL_SCRIPT = """
+        async () => {
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+            let clicks = 0;
+            while (clicks < 50) {
+                const btn = [...document.querySelectorAll('a, button')].find(
+                    el => el.textContent.trim().toLowerCase().includes('Vedi altri')
+                );
+                if (!btn) break;
+                btn.click();
+                clicks++;
+                await sleep(2000);
+            }
+        }
+    """
+
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.seen_names: dict[str, int] = {}
-        # TODO: remove after testing — limits number of dogs scraped
-        self.scrape_limit = int(os.environ.get("SCRAPE_LIMIT", 0))
-        self.scraped_count = 0
 
     def _unique_name(self, name: str) -> str:
         """Take care of repetitive names."""
@@ -35,21 +55,29 @@ class QuattroZampeSpider(scrapy.Spider):
         return name
 
     def start_requests(self):
-        yield scrapy.Request(url=self.start_url, callback=self.parse)
+        yield scrapy.Request(
+            url=self.start_url,
+            meta={
+                "playwright": True,
+                "playwright_page_methods": [
+                    PageMethod("wait_for_selector", "article.wdo-pt-slide", timeout=15000),
+                    PageMethod("evaluate", self.LOAD_ALL_SCRIPT),
+                    PageMethod("wait_for_timeout", 2000),
+                ],
+            },
+            callback=self.parse,
+        )
 
     def parse(self, response):
         # Old selector (site redesigned ~2026-04):
         # dog_cards = response.xpath("/html/body/div[1]/section[2]/div/div[3]/div/div/div/div/article")
         dog_cards = response.css("article.wdo-pt-slide")
+        logger.info(f"Found {len(dog_cards)} dog cards after loading all pages")
 
         for card in dog_cards:
-            # TODO: remove after testing — stop early when limit reached
-            if self.scrape_limit and self.scraped_count >= self.scrape_limit:
-                return
             inside_link = card.css("a::attr(href)").get()
             if "torino" in str(inside_link):
                 self.pages.add(inside_link)
-                self.scraped_count += 1
                 yield response.follow(inside_link, callback=self.parse_dog_detail)
 
         # Old pagination (site now uses AJAX "Load More"):
