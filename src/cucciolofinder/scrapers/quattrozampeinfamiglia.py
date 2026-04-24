@@ -37,7 +37,7 @@ class QuattroZampeSpider(scrapy.Spider):
                 if (!btn) break;
                 btn.click();
                 clicks++;
-                await sleep(2000);
+                await sleep(6000);
             }
         }
     """
