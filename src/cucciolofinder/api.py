@@ -16,6 +16,15 @@ from sqlalchemy import Engine, text
 
 from .database.db import DEFAULT_DB_PATH, get_engine, get_session
 from .database.models import DogImage
+from .enrichment.backends import (
+    BackendConfigError,
+    any_backend_uses_groq,
+    any_backend_uses_mistral,
+    get_fallback_enabled,
+    get_search_backend,
+    get_translation_backend,
+    validate_backend_config,
+)
 
 # Mistral 7B Instruct GGUF (4-bit quantized ~4.4GB)
 SEARCH_MODEL_PATH = os.environ.get(
@@ -88,7 +97,13 @@ def _load_search_model() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """only for context manager send blockings to threads"""
-    # Startup
+    # Startup: validate backend env vars first; misconfig should prevent startup.
+    try:
+        validate_backend_config(exit_on_error=False)
+    except BackendConfigError as exc:
+        logger.error(f"Backend config invalid: {exc}")
+        raise
+
     try:
         await asyncio.to_thread(_probe_db)
         logger.info("DB connection OK")
@@ -96,12 +111,15 @@ async def lifespan(app: FastAPI):
         logger.warning(f"DB not reachable at startup: {exc}")
         _state.db_ok = False
 
-    try:
-        await asyncio.to_thread(_load_search_model)
-        logger.info(f"Search model loaded OK: {SEARCH_MODEL_PATH}")
-    except Exception as exc:
-        logger.warning(f"Search model not loaded at startup: {exc}")
-        _state.search_model_ok = False
+    if any_backend_uses_mistral():
+        try:
+            await asyncio.to_thread(_load_search_model)
+            logger.info(f"Search model loaded OK: {SEARCH_MODEL_PATH}")
+        except Exception as exc:
+            logger.warning(f"Search model not loaded at startup: {exc}")
+            _state.search_model_ok = False
+    else:
+        logger.info("Skipping Mistral load — both backends point at Groq")
 
     if _state.db_ok:
         try:
@@ -216,6 +234,17 @@ def _reload_caches() -> int:
 
         enums["good_with_en"] = flatten_json_array(Dog.good_with_en)
         enums["bad_with_en"] = flatten_json_array(Dog.bad_with_en)
+
+        # Top-N most frequent breeds — used as a soft hint in the extraction
+        # prompt so the model recognizes common breeds without restricting output.
+        top_breed_rows = session.execute(
+            select(Dog.breed_en, func.count(Dog.id))
+            .where(Dog.breed_en.isnot(None))
+            .group_by(Dog.breed_en)
+            .order_by(func.count(Dog.id).desc())
+            .limit(20)
+        ).all()
+        enums["breed_en_top"] = [b for b, _ in top_breed_rows if b]
 
         # date ranges
         min_post, max_post = session.execute(
@@ -592,52 +621,73 @@ def get_dog(dog_id: int):
 
 #### POST /api/dogs/search
 
-# Mistral instruct prompt — [INST] tags required by the model
-_EXTRACTION_PROMPT = """\
-[INST] You are a dog search assistant. Extract search filters from the user's text and return ONLY a JSON object. No explanation, no extra text.
-
-Valid keys and values:
-- size: small, medium, large, giant
-- gender: male, female
-- fur: short, medium, long
-- weight: light, medium, heavy
-- age: puppy, young, adult, senior
-- breed: any breed name (e.g. "German Shepherd", "Golden Retriever")
-- good_with: list from: children, elderly, cats, dogs
-- bad_with: list from: children, elderly, cats, dogs
-
-Rules:
-- Include every attribute that is mentioned or implied. Do not skip any.
-- If the user says "any" for a field, do NOT include that field.
-- "not good with X" means bad_with, NOT good_with.
-- good_with and bad_with values must be lists.
-- Return ONLY the JSON object, nothing else.
-
-Examples:
-
-Text: "big male dog with long fur, maybe a German Shepherd, good with elderly but not with cats"
-{"size": "large", "gender": "male", "fur": "long", "breed": "German Shepherd", "good_with": ["elderly"], "bad_with": ["cats"]}
-
-Text: "lightweight puppy good with kids and elderly"
-{"weight": "light", "age": "puppy", "good_with": ["children", "elderly"]}
-
-Text: "small female puppy that likes cats"
-{"size": "small", "gender": "female", "age": "puppy", "good_with": ["cats"]}
-
-Text: "<USER_QUERY>" [/INST]"""
-
-
+# Stable canonical fields — domain-defined, not data-defined.
 _VALID_VALUES: dict[str, set[str]] = {
     "size": {"small", "medium", "large", "giant"},
     "gender": {"male", "female"},
     "fur": {"short", "medium", "long"},
     "weight": {"light", "medium", "heavy"},
     "age": {"puppy", "young", "adult", "senior"},
-    "good_with": {"children", "elderly", "cats", "dogs"},
-    "bad_with": {"children", "elderly", "cats", "dogs"},
 }
 
 _STRIP_VALUES = {"any", "all", "none", "unknown", "n/a", ""}
+
+# Used when the enums cache is empty (first start, no dogs yet).
+_GOOD_BAD_WITH_FALLBACK = ["children", "elderly", "cats", "dogs"]
+
+
+def _build_extraction_system_prompt(
+    good_with: list[str],
+    bad_with: list[str],
+    common_breeds: list[str],
+) -> str:
+    """Build the filter-extraction system prompt body (no [INST] wrappers).
+
+    `common_breeds` MUST be empty for the Mistral call site — n_ctx=2048 on
+    the CPU-only 8 GB VPS makes long breed enumerations expensive (RAM +
+    latency). Pass the top-N list only on the Groq call site.
+    """
+    gw = ", ".join(good_with) if good_with else ", ".join(_GOOD_BAD_WITH_FALLBACK)
+    bw = ", ".join(bad_with) if bad_with else ", ".join(_GOOD_BAD_WITH_FALLBACK)
+
+    breed_hint = ""
+    if common_breeds:
+        breed_hint = (
+            "\n- Common breeds in our database (prefer these names when applicable): "
+            + ", ".join(common_breeds)
+        )
+
+    return (
+        "You are a dog search assistant. Extract search filters from the user's text and return ONLY a JSON object. No explanation, no extra text.\n"
+        "\n"
+        "Valid keys and values:\n"
+        "- size: small, medium, large, giant\n"
+        "- gender: male, female\n"
+        "- fur: short, medium, long\n"
+        "- weight: light, medium, heavy\n"
+        "- age: puppy, young, adult, senior\n"
+        f"- breed: any breed name (e.g. \"German Shepherd\", \"Golden Retriever\"){breed_hint}\n"
+        f"- good_with: list from: {gw}\n"
+        f"- bad_with: list from: {bw}\n"
+        "\n"
+        "Rules:\n"
+        "- Include every attribute that is mentioned or implied. Do not skip any.\n"
+        "- If the user says \"any\" for a field, do NOT include that field.\n"
+        "- \"not good with X\" means bad_with, NOT good_with.\n"
+        "- good_with and bad_with values must be lists.\n"
+        "- Return ONLY the JSON object, nothing else.\n"
+        "\n"
+        "Examples:\n"
+        "\n"
+        "Text: \"big male dog with long fur, maybe a German Shepherd, good with elderly but not with cats\"\n"
+        "{\"size\": \"large\", \"gender\": \"male\", \"fur\": \"long\", \"breed\": \"German Shepherd\", \"good_with\": [\"elderly\"], \"bad_with\": [\"cats\"]}\n"
+        "\n"
+        "Text: \"lightweight puppy good with kids and elderly\"\n"
+        "{\"weight\": \"light\", \"age\": \"puppy\", \"good_with\": [\"children\", \"elderly\"]}\n"
+        "\n"
+        "Text: \"small female puppy that likes cats\"\n"
+        "{\"size\": \"small\", \"gender\": \"female\", \"age\": \"puppy\", \"good_with\": [\"cats\"]}"
+    )
 
 
 def _validate_breed(breed_input: str) -> str | None:
@@ -663,17 +713,26 @@ def _validate_breed(breed_input: str) -> str | None:
     return None
 
 
-def _postprocess_filters(raw_filters: dict) -> dict:
-    """Validate and normalize LLM-extracted filters."""
+def _postprocess_filters(
+    raw_filters: dict,
+    good_with_valid: set[str],
+    bad_with_valid: set[str],
+) -> dict:
+    """Validate and normalize LLM-extracted filters.
+
+    `good_with_valid`/`bad_with_valid` are derived from the same enum source
+    used to build the prompt, so prompt and validator stay in sync.
+    """
     cleaned: dict[str, Any] = {}
+    list_field_valid = {"good_with": good_with_valid, "bad_with": bad_with_valid}
 
     for key, value in raw_filters.items():
         if key == "breed":
             validated = _validate_breed(value if isinstance(value, str) else "")
             if validated:
                 cleaned[key] = validated
-        elif key in ("good_with", "bad_with"):
-            valid_set = _VALID_VALUES[key]
+        elif key in list_field_valid:
+            valid_set = list_field_valid[key]
             if isinstance(value, str):
                 value = [value]
             if isinstance(value, list):
@@ -694,40 +753,75 @@ def _postprocess_filters(raw_filters: dict) -> dict:
     return cleaned
 
 
-def _extract_filters(query: str) -> tuple[dict, str]:
-    """Run the LLM on the query and return (extracted_filters, raw_output)."""
+_EXTRACTION_VALID_KEYS = {
+    "size", "gender", "fur", "weight", "age", "breed", "good_with", "bad_with",
+}
+
+
+def _extract_filters_mistral(query: str, system_prompt: str) -> tuple[dict, str]:
+    """Run Mistral on the query and return (raw_filters_dict, raw_output)."""
     import json
     import re
 
-    VALID_KEYS = {"size", "gender", "fur", "weight", "age", "breed", "good_with", "bad_with"}
-
-    prompt = _EXTRACTION_PROMPT.replace("<USER_QUERY>", query)
+    prompt = f"[INST] {system_prompt}\n\nText: \"{query}\" [/INST]"
     llm = _state.search_model
     output = llm(prompt, max_tokens=200, stop=["\n\n"], temperature=0.0)
     raw = output["choices"][0]["text"].strip()
-    logger.info(f"Search model raw output: {raw!r}")
+    logger.info(f"Mistral search raw output: {raw!r}")
 
     def _try_parse(text: str) -> dict | None:
         try:
             obj = json.loads(text)
             if isinstance(obj, dict):
-                return {k: v for k, v in obj.items() if k in VALID_KEYS}
+                return {k: v for k, v in obj.items() if k in _EXTRACTION_VALID_KEYS}
         except (json.JSONDecodeError, TypeError):
             pass
         return None
 
-    # Try direct parse
     result = _try_parse(raw)
     if result is None:
-        # Try extracting JSON from surrounding text
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if match:
             result = _try_parse(match.group())
 
-    if result is None:
-        return {}, raw
+    return result or {}, raw
 
-    return _postprocess_filters(result), raw
+
+def _extract_filters(query: str) -> tuple[dict, str]:
+    """Dispatch filter extraction to the configured backend.
+
+    Reads dynamic enum values from the cache, builds the shared system prompt
+    (with a top-N breed hint only on the Groq path — Mistral's context budget
+    can't afford the extra tokens), and post-processes against the same enum
+    sets used to build the prompt.
+    """
+    enums = _state.enums_cache or {}
+    good_with = enums.get("good_with_en") or list(_GOOD_BAD_WITH_FALLBACK)
+    bad_with = enums.get("bad_with_en") or list(_GOOD_BAD_WITH_FALLBACK)
+
+    backend = get_search_backend()
+    common_breeds = enums.get("breed_en_top", []) if backend == "groq" else []
+
+    system_prompt = _build_extraction_system_prompt(good_with, bad_with, common_breeds)
+
+    if backend == "groq":
+        from .enrichment.groq_client import GroqError, groq_extract_filters
+        try:
+            raw_filters, raw_output = groq_extract_filters(query, system_prompt)
+        except GroqError as exc:
+            if get_fallback_enabled() and _state.search_model_ok:
+                logger.warning(f"Groq extraction failed, falling back to Mistral: {exc}")
+                # Mistral fallback: rebuild prompt without the breed hint to
+                # respect Mistral's prompt-size constraint.
+                mistral_prompt = _build_extraction_system_prompt(good_with, bad_with, [])
+                raw_filters, raw_output = _extract_filters_mistral(query, mistral_prompt)
+            else:
+                raise
+    else:
+        raw_filters, raw_output = _extract_filters_mistral(query, system_prompt)
+
+    cleaned = _postprocess_filters(raw_filters, set(good_with), set(bad_with))
+    return cleaned, raw_output
 
 
 class SearchRequest(BaseModel):
@@ -765,10 +859,18 @@ def search_dogs(req: SearchRequest):
     from .database.models import Dog
     from .enrichment.profile_builder import normalize_age, normalize_weight
 
-    if not _state.search_model_ok:
+    backend = get_search_backend()
+    if backend == "mistral" and not _state.search_model_ok:
         raise HTTPException(status_code=503, detail="Search model not available")
 
-    extracted, raw_output = _extract_filters(req.query)
+    from .enrichment.groq_client import GroqError
+    try:
+        extracted, raw_output = _extract_filters(req.query)
+    except GroqError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Groq extraction failed: {exc}",
+        ) from exc
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
     SessionLocal = get_session(engine)
@@ -937,9 +1039,30 @@ def get_worker_status():
 
 #### GET /api/health
 
+# 30 s in-memory cache for the Groq liveness probe. Health endpoints get
+# polled aggressively (load balancers, monitoring, frontend banner) — we
+# don't want each poll triggering an outbound HTTPS call to Groq.
+_GROQ_PROBE_CACHE_TTL = 30.0
+_groq_probe_cache: dict[str, float | bool] = {"at": 0.0, "responsive": False}
+
+
+def _groq_responsive_cached() -> bool:
+    """Cached `is_responsive()` probe — refreshed at most once per 30 s."""
+    from .enrichment.groq_client import is_responsive
+
+    now = time.time()
+    if (now - float(_groq_probe_cache["at"])) < _GROQ_PROBE_CACHE_TTL:
+        return bool(_groq_probe_cache["responsive"])
+
+    result = is_responsive()
+    _groq_probe_cache["at"] = now
+    _groq_probe_cache["responsive"] = result
+    return result
+
+
 @app.get("/api/health")
 def health():
-    """Health check: server + DB tables + search model readiness.
+    """Health check: DB + per-model readiness + active backend echo.
 
     If the DB is unreachable, attempts to reconnect so the API can
     self-heal after OOM restarts.
@@ -956,9 +1079,39 @@ def health():
 
     _state.db_ok = db_ok
 
-    all_ok = _state.db_ok and _state.search_model_ok
+    search_backend = get_search_backend()
+    translation_backend = get_translation_backend()
+    groq_in_use = any_backend_uses_groq()
+    groq_configured = bool((os.environ.get("GROQ_API_KEY") or "").strip())
+
+    # Only probe Groq when at least one backend actually uses it — otherwise
+    # don't make outbound calls the operator didn't ask for.
+    if groq_in_use and groq_configured:
+        groq_responsive: bool | None = _groq_responsive_cached()
+    elif groq_in_use:
+        groq_responsive = False  # backend=groq but key missing
+    else:
+        groq_responsive = None
+
+    # Active search backend usable?
+    if search_backend == "mistral":
+        search_ok = _state.search_model_ok
+    else:
+        search_ok = groq_configured and bool(groq_responsive)
+
+    all_ok = _state.db_ok and search_ok
     return {
         "status": "ok" if all_ok else "degraded",
         "db": _state.db_ok,
-        "search_model": _state.search_model_ok,
+        "models": {
+            "mistral": {"loaded": _state.search_model_ok},
+            "groq": {
+                "configured": groq_configured,
+                "responsive": groq_responsive,
+            },
+        },
+        "backends": {
+            "search": search_backend,
+            "translation": translation_backend,
+        },
     }

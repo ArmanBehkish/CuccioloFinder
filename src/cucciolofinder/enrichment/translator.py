@@ -193,15 +193,46 @@ class TranslationService:
         return chunks
 
     def translate_description(self, text: str, max_retries: int = 3) -> str:
-        """Translate dog description using Mistral via the API container.
+        """Translate dog description via the configured backend.
 
-        Splits descriptions longer than 800 chars into multiple chunks
-        (each ~800 chars max, cut at sentence/newline boundaries),
-        translates each separately, and combines the results.
-        Retries with backoff when the API is unreachable (e.g. OOM restart).
+        - `TRANSLATION_BACKEND=groq`: single Groq call (Llama 3.3's 128k
+          context handles any shelter description in one shot — no chunking,
+          no API hop). On failure, optionally falls back to the chunked
+          Mistral path when `GROQ_FALLBACK_TO_MISTRAL=1` AND Mistral is
+          loaded in the API container (i.e. `SEARCH_BACKEND=mistral`).
+        - `TRANSLATION_BACKEND=mistral` (default): split into ≤800 char
+          chunks at sentence/newline boundaries, translate each via
+          `POST /api/translate/description`, retry with backoff.
         """
         if not text or not text.strip():
             return ""
+
+        from cucciolofinder.enrichment.backends import (
+            get_fallback_enabled,
+            get_search_backend,
+            get_translation_backend,
+        )
+
+        if get_translation_backend() == "groq":
+            from cucciolofinder.enrichment.groq_client import (
+                GroqError,
+                groq_translate_description,
+            )
+            try:
+                return groq_translate_description(text.strip())
+            except GroqError as exc:
+                fallback_eligible = (
+                    get_fallback_enabled() and get_search_backend() == "mistral"
+                )
+                if not fallback_eligible:
+                    logger.error(
+                        f"Groq translation failed and Mistral fallback unavailable: {exc}"
+                    )
+                    return ""
+                logger.warning(
+                    f"Groq translation failed, falling back to Mistral chunked path: {exc}"
+                )
+                # fall through to the chunked Mistral path
 
         chunks = self._split_description(text.strip())
         logger.info(f"Description ({len(text)} chars) split into {len(chunks)} chunk(s): {[len(c) for c in chunks]}")

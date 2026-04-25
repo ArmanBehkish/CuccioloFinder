@@ -1,0 +1,243 @@
+"""Thin wrapper around the official `groq` SDK for translation and filter extraction.
+
+Two public call sites used by translator.py and api.py:
+
+    groq_translate_description(text)      → str
+    groq_extract_filters(query)           → (filters_dict, raw_output)
+
+Plus a lightweight liveness probe for /api/health:
+
+    is_responsive()                       → bool
+
+Retry strategy:
+    The SDK's built-in retry handles 429 (Retry-After honored) and 5xx with
+    exponential backoff + jitter. We pin `max_retries=2` (3 attempts total)
+    and let typed exceptions surface to callers. Auth errors (401/403) raise
+    `groq.AuthenticationError` immediately, no retry — these are config bugs.
+
+The extraction system prompt is built per-request by api.py's
+`_build_extraction_system_prompt` and passed to `groq_extract_filters` as
+the `system_prompt` argument; the translation system prompt is the static
+`_TRANSLATION_SYSTEM` defined below.
+"""
+
+import json
+import os
+import re
+import time
+from typing import Any
+
+from groq import (
+    APIConnectionError,
+    APIError,
+    APIStatusError,
+    AuthenticationError,
+    Groq,
+    RateLimitError,
+)
+from loguru import logger
+
+_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+_DEFAULT_TIMEOUT = 60.0
+_DEFAULT_MAX_RETRIES = 2  # SDK convention: total attempts = max_retries + 1
+
+
+class GroqError(RuntimeError):
+    """Wraps SDK errors at our boundary so callers don't need to import groq.*."""
+
+
+_client: Groq | None = None
+
+
+def _get_client() -> Groq:
+    """Lazily construct the Groq SDK client. Reads env on first call."""
+    global _client
+    if _client is None:
+        api_key = (os.environ.get("GROQ_API_KEY") or "").strip()
+        if not api_key:
+            raise GroqError("GROQ_API_KEY is empty")
+
+        kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "max_retries": _DEFAULT_MAX_RETRIES,
+            "timeout": float(os.environ.get("GROQ_TIMEOUT") or _DEFAULT_TIMEOUT),
+        }
+        base_url = os.environ.get("GROQ_BASE_URL")
+        if base_url:
+            kwargs["base_url"] = base_url
+        _client = Groq(**kwargs)
+    return _client
+
+
+def _model() -> str:
+    return os.environ.get("GROQ_MODEL") or _DEFAULT_MODEL
+
+
+def _chat_completion(
+    messages: list[dict],
+    *,
+    json_mode: bool,
+    temperature: float,
+    max_tokens: int,
+) -> str:
+    """Single SDK call. Maps SDK exceptions onto GroqError."""
+    client = _get_client()
+    kwargs: dict[str, Any] = {
+        "model": _model(),
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    try:
+        completion = client.chat.completions.create(**kwargs)
+    except AuthenticationError as e:
+        raise GroqError(f"Groq auth failed: {e}") from e
+    except RateLimitError as e:
+        raise GroqError(f"Groq rate-limited after retries: {e}") from e
+    except APIConnectionError as e:
+        raise GroqError(f"Groq unreachable after retries: {e}") from e
+    except APIStatusError as e:
+        raise GroqError(f"Groq HTTP {e.status_code}: {e}") from e
+    except APIError as e:
+        raise GroqError(f"Groq error: {e}") from e
+
+    try:
+        return completion.choices[0].message.content or ""
+    except (AttributeError, IndexError) as e:
+        raise GroqError(f"Groq returned malformed completion: {e}") from e
+
+
+# ---------------------------------------------------------------------------
+# Translation
+# ---------------------------------------------------------------------------
+
+_TRANSLATION_SYSTEM = (
+    "You are translating an Italian dog shelter adoption listing into English.\n"
+    "\n"
+    "Rules:\n"
+    "- Translate the full text naturally, preserving the warm and hopeful tone "
+    "typical of adoption listings.\n"
+    "- Keep the meaning accurate but use natural English phrasing, not "
+    "word-for-word translation.\n"
+    "- Shelter-specific terms: \"canile\" = shelter, \"box\" = kennel, "
+    "\"adottabile\" = available for adoption, \"staffetta\" = transport relay.\n"
+    "- Preserve any names, dates, locations, and identification numbers exactly "
+    "as written.\n"
+    "- Return ONLY the English translation, nothing else.\n"
+    "- Do NOT add notes, comments, explanations, or repeat the translation.\n"
+    "- Do NOT prefix with \"Translation:\" or similar headers."
+)
+
+
+def groq_translate_description(text: str) -> str:
+    """Translate an Italian description to English in a single Groq call.
+
+    `max_tokens` is input-scaled (`max(50, len(text)//3)`) — same heuristic as
+    the Mistral path — to defend against the fill-the-runway hallucination
+    pattern (paraphrased duplicates / meta-commentary). Llama 3.3's 128k
+    context easily holds any shelter description, so no chunking.
+    """
+    if not text or not text.strip():
+        return ""
+
+    stripped = text.strip()
+    max_tokens = max(50, len(stripped) // 3)
+
+    messages = [
+        {"role": "system", "content": _TRANSLATION_SYSTEM},
+        {"role": "user", "content": stripped},
+    ]
+    t0 = time.time()
+    content = _chat_completion(
+        messages,
+        json_mode=False,
+        temperature=0.2,
+        max_tokens=max_tokens,
+    )
+    elapsed = time.time() - t0
+    out = content.strip()
+    logger.info(
+        f"Groq translation: {len(stripped)}→{len(out)} chars in {elapsed:.1f}s "
+        f"(max_tokens={max_tokens})"
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Filter extraction
+# ---------------------------------------------------------------------------
+
+_VALID_KEYS = {
+    "size", "gender", "fur", "weight", "age", "breed", "good_with", "bad_with",
+}
+
+
+def groq_extract_filters(query: str, system_prompt: str) -> tuple[dict, str]:
+    """Extract filters via Groq with JSON mode on.
+
+    The caller (api.py) builds `system_prompt` from the live enums cache so
+    `good_with`/`bad_with` valid values reflect what's actually in the DB.
+    Returns `(filters_dict, raw_output)` to match the Mistral signature.
+    """
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Text: \"{query}\""},
+    ]
+    raw = _chat_completion(
+        messages,
+        json_mode=True,
+        temperature=0.0,
+        max_tokens=300,
+    ).strip()
+    logger.info(f"Groq extraction raw output: {raw!r}")
+
+    parsed = _try_parse_json(raw)
+    if parsed is None:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            parsed = _try_parse_json(match.group())
+
+    if parsed is None:
+        logger.warning(f"Groq returned non-JSON despite json_mode=True: {raw!r}")
+        return {}, raw
+
+    return parsed, raw
+
+
+def _try_parse_json(text: str) -> dict | None:
+    try:
+        obj = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    return {k: v for k, v in obj.items() if k in _VALID_KEYS}
+
+
+# ---------------------------------------------------------------------------
+# Liveness probe (for /api/health)
+# ---------------------------------------------------------------------------
+
+
+def is_responsive(timeout: float = 5.0) -> bool:
+    """Cheap probe — list available models with the configured key.
+
+    The api.py health handler caches the result for 30 s to avoid hammering
+    Groq on every health-check poll.
+    """
+    try:
+        client = _get_client()
+    except GroqError:
+        return False
+    try:
+        client.with_options(timeout=timeout, max_retries=0).models.list()
+    except (AuthenticationError, APIError, APIConnectionError) as e:
+        logger.warning(f"Groq is_responsive probe failed: {e}")
+        return False
+    except Exception as e:  # noqa: BLE001 — defensive net for any SDK-internal error
+        logger.warning(f"Groq is_responsive probe unexpected error: {e}")
+        return False
+    return True

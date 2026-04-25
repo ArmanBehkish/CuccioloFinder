@@ -6,6 +6,7 @@ load_dotenv()
 
 from cucciolofinder.database import get_engine, get_session, init_db, reset_translations
 from cucciolofinder.enrichment import enrich_breed_detection, enrich_translations
+from cucciolofinder.enrichment.backends import validate_backend_config
 from cucciolofinder.scrapers.quattrozampeinfamiglia import QuattroZampeSpider
 from cucciolofinder.scrapers.alberodimais import AlberoDiMaisSpider
 from cucciolofinder.scrapers.empethy import EmpethySpider
@@ -27,6 +28,8 @@ if __name__ == "__main__":
 
     # Scheduled production flow:
     # reset_translations() → scrape all spiders + pipelines → enrich_translations()
+
+    validate_backend_config(exit_on_error=True)
 
     import os
     api_url = os.environ.get("API_URL", "http://localhost:8000")
