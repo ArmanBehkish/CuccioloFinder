@@ -86,7 +86,7 @@ class AlberoDiMaisSpider(scrapy.Spider):
             "source_url": response.url,
             "name": name,
             "gender": gender,
-            "age": f"{age}",
+            "age": f"{age} anno" if age == 1 else f"{age} anni" if age is not None else None,
             "descriptions": descs,   # list of texts
             "image_urls": images,
         }
