@@ -322,7 +322,7 @@ def enums():
     """Return distinct values for every filterable field, served from cache."""
     if not _state.enums_cache:
         raise HTTPException(status_code=503, detail="Enums not available — DB unreachable or cache never refreshed after a failed start")
-    return _state.enums_cache
+    return {k: v for k, v in _state.enums_cache.items() if k != "breed_en_top"}
 
 
 #### GET /api/stats
@@ -650,12 +650,19 @@ def _build_extraction_system_prompt(
     gw = ", ".join(good_with) if good_with else ", ".join(_GOOD_BAD_WITH_FALLBACK)
     bw = ", ".join(bad_with) if bad_with else ", ".join(_GOOD_BAD_WITH_FALLBACK)
 
-    breed_hint = ""
     if common_breeds:
-        breed_hint = (
-            "\n- Common breeds in our database (prefer these names when applicable): "
-            + ", ".join(common_breeds)
+        breed_line = (
+            f"- breed: the OUTPUT must be EXACTLY one of these allowed values (verbatim): {', '.join(common_breeds)}. "
+            "If the user mentions a breed using a loose, partial, or related name (e.g. \"bulldog\", \"lab\", \"shepherd\"), use your judgment to pick the closest match from this list. "
+            "If no value in the list reasonably matches the user's intent, OMIT the breed field entirely. NEVER output a breed name that is not in this list."
         )
+        breed_rule = (
+            "- breed: the output value MUST be copied verbatim from the allowed list above. "
+            "You may interpret loose user phrasing to find the best-matching list entry, but the field value itself must be from the list — or omitted entirely. Never invent or substitute a name outside the list.\n"
+        )
+    else:
+        breed_line = "- breed: any breed name (e.g. \"German Shepherd\", \"Golden Retriever\")"
+        breed_rule = ""
 
     return (
         "You are a dog search assistant. Extract search filters from the user's text and return ONLY a JSON object. No explanation, no extra text.\n"
@@ -666,7 +673,7 @@ def _build_extraction_system_prompt(
         "- fur: short, medium, long\n"
         "- weight: light, medium, heavy\n"
         "- age: puppy, young, adult, senior\n"
-        f"- breed: any breed name (e.g. \"German Shepherd\", \"Golden Retriever\"){breed_hint}\n"
+        f"{breed_line}\n"
         f"- good_with: list from: {gw}\n"
         f"- bad_with: list from: {bw}\n"
         "\n"
@@ -675,6 +682,7 @@ def _build_extraction_system_prompt(
         "- If the user says \"any\" for a field, do NOT include that field.\n"
         "- \"not good with X\" means bad_with, NOT good_with.\n"
         "- good_with and bad_with values must be lists.\n"
+        f"{breed_rule}"
         "- Return ONLY the JSON object, nothing else.\n"
         "\n"
         "Examples:\n"
@@ -801,6 +809,7 @@ def _extract_filters(query: str) -> tuple[dict, str]:
 
     backend = get_search_backend()
     common_breeds = enums.get("breed_en_top", []) if backend == "groq" else []
+    logger.info(f"Search extraction: backend={backend}, common_breeds={common_breeds}")
 
     system_prompt = _build_extraction_system_prompt(good_with, bad_with, common_breeds)
 
