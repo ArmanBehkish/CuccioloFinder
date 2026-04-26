@@ -38,6 +38,7 @@ from groq import (
 from loguru import logger
 
 _DEFAULT_MODEL = "llama-3.3-70b-versatile"
+_DEFAULT_BASE_URL = "https://api.groq.com"
 _DEFAULT_TIMEOUT = 60.0
 _DEFAULT_MAX_RETRIES = 2  # SDK convention: total attempts = max_retries + 1
 
@@ -57,14 +58,17 @@ def _get_client() -> Groq:
         if not api_key:
             raise GroqError("GROQ_API_KEY is empty")
 
+        # `GROQ_BASE_URL` may be set to empty string in .env (the template ships
+        # with `GROQ_BASE_URL=`) — the SDK reads the env var itself and treats
+        # `""` as a real base URL, producing scheme-less request URLs. Always
+        # pass an explicit base_url so the SDK never falls through to env read.
+        base_url = (os.environ.get("GROQ_BASE_URL") or "").strip() or _DEFAULT_BASE_URL
         kwargs: dict[str, Any] = {
             "api_key": api_key,
+            "base_url": base_url,
             "max_retries": _DEFAULT_MAX_RETRIES,
             "timeout": float(os.environ.get("GROQ_TIMEOUT") or _DEFAULT_TIMEOUT),
         }
-        base_url = os.environ.get("GROQ_BASE_URL")
-        if base_url:
-            kwargs["base_url"] = base_url
         _client = Groq(**kwargs)
     return _client
 
