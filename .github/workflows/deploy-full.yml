@@ -26,6 +26,15 @@ jobs:
           command_timeout: 30m
           script: |
             cd /opt/cucciolofinder
+
+            git status --short
+            test -z "$(git status --short)" || {
+              echo "ERROR: Server working tree is dirty. Refusing deploy."
+              echo "Local changes:"
+              git status --short
+              exit 1
+            }
+
             git pull origin main
 
             # Stop and remove target containers/images
