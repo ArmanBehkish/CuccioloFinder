@@ -76,8 +76,8 @@ def get_session(engine: Engine) -> sessionmaker[Session]:
 
 
 def reset_translations(session: Session) -> int:
-    #Reset all _en fields to NULL
-    dogs = session.query(Dog).all()
+    #Reset all _en fields to NULL on active rows only
+    dogs = session.query(Dog).filter(Dog.superseded_at.is_(None)).all()
     count = 0
 
     for dog in dogs:

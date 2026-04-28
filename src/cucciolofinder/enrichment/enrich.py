@@ -41,7 +41,7 @@ def enrich_translations(session: Session, limit: int | None = None) -> int:
     translator = TranslationService()
     processed_count = 0
 
-    query = session.query(Dog)
+    query = session.query(Dog).filter(Dog.superseded_at.is_(None))
     if limit:
         query = query.limit(limit)
     dogs = query.all()
@@ -196,7 +196,7 @@ def enrich_breed_detection(session: Session) -> int:
     logger.info(f"Breed validation: {len(vit_to_akc)} ViT mappings, {len(valid_breeds)} valid breeds")
 
     # --- iterate all dogs ---
-    dogs = session.query(Dog).all()
+    dogs = session.query(Dog).filter(Dog.superseded_at.is_(None)).all()
     logger.info(f"Processing breed detection for {len(dogs)} dogs")
 
     processed = 0

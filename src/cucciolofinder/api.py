@@ -179,7 +179,9 @@ def _reload_caches() -> int:
 
         def distinct_non_null(col):
             rows = session.execute(
-                select(distinct(col)).where(col.isnot(None)).order_by(col)
+                select(distinct(col))
+                .where(col.isnot(None), Dog.superseded_at.is_(None))
+                .order_by(col)
             ).scalars().all()
             return [r for r in rows if r]
 
@@ -197,7 +199,7 @@ def _reload_caches() -> int:
         # age_category: derived from age_en
         age_cats: set[str] = set()
         for (age_en,) in session.execute(
-            select(Dog.age_en).where(Dog.age_en.isnot(None))
+            select(Dog.age_en).where(Dog.age_en.isnot(None), Dog.superseded_at.is_(None))
         ).all():
             cat = normalize_age(age_en)
             if cat:
@@ -207,7 +209,7 @@ def _reload_caches() -> int:
         # weight categories: derived from weight column
         weight_cats: set[str] = set()
         for (w,) in session.execute(
-            select(Dog.weight).where(Dog.weight.isnot(None))
+            select(Dog.weight).where(Dog.weight.isnot(None), Dog.superseded_at.is_(None))
         ).all():
             cat = normalize_weight(w)
             if cat:
@@ -217,7 +219,9 @@ def _reload_caches() -> int:
         # good_with_en / bad_with_en: flatten JSON arrays
         def flatten_json_array(col):
             values: set[str] = set()
-            for (arr,) in session.execute(select(col).where(col.isnot(None))).all():
+            for (arr,) in session.execute(
+                select(col).where(col.isnot(None), Dog.superseded_at.is_(None))
+            ).all():
                 if isinstance(arr, list):
                     for v in arr:
                         if v:
@@ -239,7 +243,7 @@ def _reload_caches() -> int:
         # prompt so the model recognizes common breeds without restricting output.
         top_breed_rows = session.execute(
             select(Dog.breed_en, func.count(Dog.id))
-            .where(Dog.breed_en.isnot(None))
+            .where(Dog.breed_en.isnot(None), Dog.superseded_at.is_(None))
             .group_by(Dog.breed_en)
             .order_by(func.count(Dog.id).desc())
             .limit(20)
@@ -248,7 +252,9 @@ def _reload_caches() -> int:
 
         # date ranges
         min_post, max_post = session.execute(
-            select(func.min(Dog.post_date), func.max(Dog.post_date))
+            select(func.min(Dog.post_date), func.max(Dog.post_date)).where(
+                Dog.superseded_at.is_(None)
+            )
         ).one()
         enums["post_date"] = {
             "min": str(min_post) if min_post else None,
@@ -257,7 +263,7 @@ def _reload_caches() -> int:
 
         min_ss, max_ss = session.execute(
             select(func.min(Dog.shelter_since), func.max(Dog.shelter_since)).where(
-                Dog.shelter_since.isnot(None)
+                Dog.shelter_since.isnot(None), Dog.superseded_at.is_(None)
             )
         ).one()
         enums["shelter_since"] = {
@@ -269,7 +275,9 @@ def _reload_caches() -> int:
         _state.enums_cache = enums
 
         # stats cache
-        dogs_rows = session.execute(select(Dog)).scalars().all()
+        dogs_rows = session.execute(
+            select(Dog).where(Dog.superseded_at.is_(None))
+        ).scalars().all()
         # TODO: remove debug logging after cache issue is resolved
         logger.info(f"_reload_caches: ORM dog count={len(dogs_rows)}")
 
@@ -421,7 +429,9 @@ def filter_dogs(params: FilterDogsParams = Depends()):
     SessionLocal = get_session(engine)
 
     with SessionLocal() as session:
-        q = select(Dog).options(selectinload(Dog.images))
+        q = select(Dog).options(selectinload(Dog.images)).where(
+            Dog.superseded_at.is_(None)
+        )
 
         # SQL-level filters
         if params.source_site:
@@ -520,6 +530,7 @@ class BreedDetection(BaseModel):
 
 class DogProfileOut(BaseModel):
     id: int
+    dog_uid: str
     name: str
     source_site: str
     source_url: str
@@ -557,7 +568,9 @@ def get_dog(dog_id: int):
 
     with SessionLocal() as session:
         dog = session.execute(
-            select(Dog).where(Dog.id == dog_id).options(selectinload(Dog.images))
+            select(Dog)
+            .where(Dog.id == dog_id, Dog.superseded_at.is_(None))
+            .options(selectinload(Dog.images))
         ).scalar_one_or_none()
 
         if dog is None:
@@ -591,6 +604,7 @@ def get_dog(dog_id: int):
 
     return DogProfileOut(
         id=dog.id,
+        dog_uid=dog.dog_uid,
         name=dog.name,
         source_site=dog.source_site,
         source_url=dog.source_url,
@@ -885,7 +899,9 @@ def search_dogs(req: SearchRequest):
     SessionLocal = get_session(engine)
 
     with SessionLocal() as session:
-        q = select(Dog).options(selectinload(Dog.images))
+        q = select(Dog).options(selectinload(Dog.images)).where(
+            Dog.superseded_at.is_(None)
+        )
 
         # SQL-level filters from extracted fields
         if gender := extracted.get("gender"):

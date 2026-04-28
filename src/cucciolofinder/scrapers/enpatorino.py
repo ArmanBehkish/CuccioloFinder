@@ -19,14 +19,15 @@ CATEGORY_PATHS = [
 ]
 
 # Only scrape new items
-MAX_AGE_DAYS = 365
+MAX_AGE_DAYS = 600
 
 
 class EnpaTorinoSpider(scrapy.Spider):
     name = "EnpaTorinoSpider"
     custom_settings = {
         "ITEM_PIPELINES": {
-            "cucciolofinder.scrapers.pipelines.EnpaTorinoPipeline": 1,
+            "cucciolofinder.scrapers.pipelines.IdentityPipeline": 1,
+            "cucciolofinder.scrapers.pipelines.EnpaTorinoPipeline": 5,
             "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
         },
         "IMAGES_STORE": os.environ.get("IMAGES_PATH", "data/images"),
@@ -36,7 +37,6 @@ class EnpaTorinoSpider(scrapy.Spider):
         super().__init__(*args, **kwargs)
         self.base_url = SHELTER_SITES["enpatorino"].url
         self.cutoff_date = datetime.now() - timedelta(days=MAX_AGE_DAYS)
-        self.seen_names: dict[str, int] = {}
 
     def start_requests(self):
         # TODO: extract paths to make it more robust
@@ -80,18 +80,10 @@ class EnpaTorinoSpider(scrapy.Spider):
                 logger.info(f"Following next page: {next_page}")
                 yield response.follow(next_page, callback=self.parse)
 
-    def _unique_name(self, name: str) -> str:
-        """Take care of repetitive names."""
-        if name in self.seen_names:
-            self.seen_names[name] += 1
-            return f"{name}__{self.seen_names[name]:02d}"
-        self.seen_names[name] = 1
-        return name
-
     def parse_dog_detail(self, response, post_date):
         raw_name = response.css("h1.post-title::text").get()
         if raw_name:
-            name = self._unique_name(raw_name or "unknown")
+            name = raw_name.strip()
         else:
             raise ValueError("Dog's name missing!")
 

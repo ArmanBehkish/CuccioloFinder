@@ -17,7 +17,8 @@ class CanileOasiSpider(scrapy.Spider):
     name = "CanileOasiSpider"
     custom_settings = {
         "ITEM_PIPELINES": {
-            "cucciolofinder.scrapers.pipelines.CanileOasiPipeline": 1,
+            "cucciolofinder.scrapers.pipelines.IdentityPipeline": 1,
+            "cucciolofinder.scrapers.pipelines.CanileOasiPipeline": 5,
             "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
         },
         "IMAGES_STORE": os.environ.get("IMAGES_PATH", "data/images"),
@@ -28,7 +29,6 @@ class CanileOasiSpider(scrapy.Spider):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.start_url = SHELTER_SITES["canileoasi"].url
-        self.seen_names: dict[str, int] = {}
 
     def start_requests(self):
         yield scrapy.Request(url=self.start_url, callback=self.parse)
@@ -41,14 +41,6 @@ class CanileOasiSpider(scrapy.Spider):
             detail_url = card.css("h3.entry-title a::attr(href)").get()
             if detail_url:
                 yield response.follow(detail_url, callback=self.parse_dog_detail)
-
-    def _unique_name(self, name: str) -> str:
-        """Take care of repetitive names."""
-        if name in self.seen_names:
-            self.seen_names[name] += 1
-            return f"{name}__{self.seen_names[name]:02d}"
-        self.seen_names[name] = 1
-        return name
 
     def _parse_italian_date_full(self, date_str: str) -> datetime | None:
         """Parse date like '7 Aprile 2021' """
@@ -66,7 +58,7 @@ class CanileOasiSpider(scrapy.Spider):
     def parse_dog_detail(self, response: scrapy.http.Response) -> dict:
         raw_name = response.css("h1.entry-title::text").get()
         if raw_name:
-            name = self._unique_name(raw_name.strip())
+            name = raw_name.strip()
             logger.debug(f"Dog name: {name}")
         else:
             raise ValueError("Dog's name missing!")

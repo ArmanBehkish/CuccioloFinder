@@ -12,7 +12,8 @@ class QuattroZampeSpider(scrapy.Spider):
     name = "QuattrozampeSpider"
     custom_settings = {
         "ITEM_PIPELINES": {
-            "cucciolofinder.scrapers.pipelines.QuattroImagesPipeline": 1,
+            "cucciolofinder.scrapers.pipelines.IdentityPipeline": 1,
+            "cucciolofinder.scrapers.pipelines.QuattroImagesPipeline": 5,
             "cucciolofinder.scrapers.pipelines.DatabasePipeline": 14,
         },
         "IMAGES_STORE": os.environ.get("IMAGES_PATH", "data/images"),
@@ -41,18 +42,6 @@ class QuattroZampeSpider(scrapy.Spider):
             }
         }
     """
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
-        self.seen_names: dict[str, int] = {}
-
-    def _unique_name(self, name: str) -> str:
-        """Take care of repetitive names."""
-        if name in self.seen_names:
-            self.seen_names[name] += 1
-            return f"{name}__{self.seen_names[name]:02d}"
-        self.seen_names[name] = 1
-        return name
 
     def start_requests(self):
         yield scrapy.Request(
@@ -92,7 +81,7 @@ class QuattroZampeSpider(scrapy.Spider):
 
         desc = response.xpath("/html/body/div[1]/section[5]/div/div[2]")
         raw_name = desc.css("h2::text").get()
-        name = self._unique_name(raw_name.strip()) if raw_name else None
+        name = raw_name.strip() if raw_name else None
 
         # Description
         desc_parts = response.css("div.geodir-field-mi_presento p::text").getall()

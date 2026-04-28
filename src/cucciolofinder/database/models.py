@@ -7,10 +7,12 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -34,7 +36,10 @@ class Dog(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     source_site = Column(String, nullable=False)
-    source_url = Column(String, nullable=False, unique=True)
+    source_url = Column(String, nullable=False)
+    dog_uid = Column(String(16), nullable=False, unique=True, index=True)
+    generation = Column(Integer, nullable=False, default=1)
+    superseded_at = Column(DateTime, nullable=True)
     name = Column(String, nullable=False)
 
     description = Column(Text)
@@ -75,6 +80,16 @@ class Dog(Base):
     images = relationship("DogImage", back_populates="dog", cascade="all, delete-orphan")
     provenance = relationship(
         "FieldProvenance", back_populates="dog", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_dog_active_url",
+            "source_site",
+            "source_url",
+            unique=True,
+            sqlite_where=text("superseded_at IS NULL"),
+        ),
     )
 
 
