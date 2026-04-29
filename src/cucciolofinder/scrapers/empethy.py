@@ -4,11 +4,12 @@ import scrapy
 from loguru import logger
 from scrapy_playwright.page import PageMethod
 
-from cucciolofinder.config import SHELTER_SITES
+from cucciolofinder.config import SCRAPE_LIMIT_PER_SPIDER, SHELTER_SITES
 
 
 class EmpethySpider(scrapy.Spider):
     name = "EmpethySpider"
+    _scraped = 0  # quick-test counter, bounded by SCRAPE_LIMIT_PER_SPIDER
     custom_settings = {
         "ITEM_PIPELINES": {
             "cucciolofinder.scrapers.pipelines.IdentityPipeline": 1,
@@ -63,6 +64,10 @@ class EmpethySpider(scrapy.Spider):
         logger.debug(f"Found {len(dog_links)} dog links on listing page")
 
         for link in dog_links:
+            if SCRAPE_LIMIT_PER_SPIDER is not None and self._scraped >= SCRAPE_LIMIT_PER_SPIDER:
+                logger.info(f"SCRAPE_LIMIT_PER_SPIDER={SCRAPE_LIMIT_PER_SPIDER} reached, stopping")
+                return
+            self._scraped += 1
             yield response.follow(link, callback=self.parse_dog_detail)
 
     def parse_dog_detail(self, response):

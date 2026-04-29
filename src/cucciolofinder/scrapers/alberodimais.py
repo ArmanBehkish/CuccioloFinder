@@ -4,12 +4,13 @@ from datetime import datetime
 import scrapy
 from loguru import logger
 
-from cucciolofinder.config import SHELTER_SITES
+from cucciolofinder.config import SCRAPE_LIMIT_PER_SPIDER, SHELTER_SITES
 from .pipelines import AlberoDiMaisPipeline
 
 
 class AlberoDiMaisSpider(scrapy.Spider):
     name = "AlberoDiMaisSpider"
+    _scraped = 0  # quick-test counter, bounded by SCRAPE_LIMIT_PER_SPIDER
     custom_settings = {
         "ITEM_PIPELINES": {
             "cucciolofinder.scrapers.pipelines.IdentityPipeline": 1,
@@ -30,10 +31,14 @@ class AlberoDiMaisSpider(scrapy.Spider):
         logger.debug(f"Found {len(dog_cards)} dog cards on page")  # DEBUG
 
         for card in dog_cards:
+            if SCRAPE_LIMIT_PER_SPIDER is not None and self._scraped >= SCRAPE_LIMIT_PER_SPIDER:
+                logger.info(f"SCRAPE_LIMIT_PER_SPIDER={SCRAPE_LIMIT_PER_SPIDER} reached, stopping")
+                return
             inside_link = card.css("a::attr(href)").get()
             logger.debug(f"Found link: {inside_link}")  # DEBUG
             self.pages.add(inside_link)
             logger.debug(f"number of inside links until now: {len(self.pages)}")
+            self._scraped += 1
             yield response.follow(inside_link, callback=self.parse_dog_detail)
 
        

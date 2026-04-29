@@ -4,12 +4,13 @@ import scrapy
 from loguru import logger
 from scrapy_playwright.page import PageMethod
 
-from cucciolofinder.config import SHELTER_SITES
+from cucciolofinder.config import SCRAPE_LIMIT_PER_SPIDER, SHELTER_SITES
 from .pipelines import QuattroImagesPipeline
 
 
 class QuattroZampeSpider(scrapy.Spider):
     name = "QuattrozampeSpider"
+    _scraped = 0  # quick-test counter, bounded by SCRAPE_LIMIT_PER_SPIDER
     custom_settings = {
         "ITEM_PIPELINES": {
             "cucciolofinder.scrapers.pipelines.IdentityPipeline": 1,
@@ -64,9 +65,13 @@ class QuattroZampeSpider(scrapy.Spider):
         logger.info(f"Found {len(dog_cards)} dog cards after loading all pages")
 
         for card in dog_cards:
+            if SCRAPE_LIMIT_PER_SPIDER is not None and self._scraped >= SCRAPE_LIMIT_PER_SPIDER:
+                logger.info(f"SCRAPE_LIMIT_PER_SPIDER={SCRAPE_LIMIT_PER_SPIDER} reached, stopping")
+                return
             inside_link = card.css("a::attr(href)").get()
             if inside_link:
                 self.pages.add(inside_link)
+                self._scraped += 1
                 yield response.follow(inside_link, callback=self.parse_dog_detail)
 
         # Old pagination (site now uses AJAX "Load More"):

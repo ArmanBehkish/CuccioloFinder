@@ -4,7 +4,6 @@ from loguru import logger
 
 load_dotenv()
 
-from cucciolofinder.config import SCRAPE_LIMIT_PER_SPIDER
 from cucciolofinder.database import get_engine, get_session, init_db, reset_translations
 from cucciolofinder.enrichment import enrich_breed_detection, enrich_translations
 from cucciolofinder.enrichment.backends import validate_backend_config
@@ -41,16 +40,12 @@ if __name__ == "__main__":
 
     # Step 1: Scrape all sources
     logger.info("Starting scraping...")
-    crawler_settings = {}
-    if SCRAPE_LIMIT_PER_SPIDER is not None:
-        logger.warning(f"SCRAPE_LIMIT_PER_SPIDER={SCRAPE_LIMIT_PER_SPIDER} — quick-test mode, each spider will close after this many items")
-        crawler_settings["CLOSESPIDER_ITEMCOUNT"] = SCRAPE_LIMIT_PER_SPIDER
-    process = CrawlerProcess(crawler_settings)
+    process = CrawlerProcess()
     process.crawl(QuattroZampeSpider)
-    # process.crawl(EmpethySpider)
-    # process.crawl(AlberoDiMaisSpider)
-    # process.crawl(EnpaTorinoSpider)
-    # process.crawl(CanileOasiSpider)
+    process.crawl(EmpethySpider)
+    process.crawl(AlberoDiMaisSpider)
+    process.crawl(EnpaTorinoSpider)
+    process.crawl(CanileOasiSpider)
     process.start()
 
     # Step 2: Enrich translations

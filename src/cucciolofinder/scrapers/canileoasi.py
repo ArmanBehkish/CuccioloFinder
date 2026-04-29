@@ -4,7 +4,7 @@ from datetime import datetime
 import scrapy
 from loguru import logger
 
-from cucciolofinder.config import SHELTER_SITES
+from cucciolofinder.config import SCRAPE_LIMIT_PER_SPIDER, SHELTER_SITES
 
 ITALIAN_MONTHS_FULL: dict[str, int] = {
     "Gennaio": 1, "Febbraio": 2, "Marzo": 3, "Aprile": 4,
@@ -15,6 +15,7 @@ ITALIAN_MONTHS_FULL: dict[str, int] = {
 
 class CanileOasiSpider(scrapy.Spider):
     name = "CanileOasiSpider"
+    _scraped = 0  # quick-test counter, bounded by SCRAPE_LIMIT_PER_SPIDER
     custom_settings = {
         "ITEM_PIPELINES": {
             "cucciolofinder.scrapers.pipelines.IdentityPipeline": 1,
@@ -38,8 +39,12 @@ class CanileOasiSpider(scrapy.Spider):
         logger.debug(f"Found {len(cards)} dog cards")
 
         for card in cards:
+            if SCRAPE_LIMIT_PER_SPIDER is not None and self._scraped >= SCRAPE_LIMIT_PER_SPIDER:
+                logger.info(f"SCRAPE_LIMIT_PER_SPIDER={SCRAPE_LIMIT_PER_SPIDER} reached, stopping")
+                return
             detail_url = card.css("h3.entry-title a::attr(href)").get()
             if detail_url:
+                self._scraped += 1
                 yield response.follow(detail_url, callback=self.parse_dog_detail)
 
     def _parse_italian_date_full(self, date_str: str) -> datetime | None:

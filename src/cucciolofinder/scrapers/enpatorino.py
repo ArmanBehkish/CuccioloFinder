@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import scrapy
 from loguru import logger
 
-from cucciolofinder.config import SHELTER_SITES
+from cucciolofinder.config import SCRAPE_LIMIT_PER_SPIDER, SHELTER_SITES
 
 ITALIAN_MONTHS: dict[str, int] = {
     "Gen": 1, "Feb": 2, "Mar": 3, "Apr": 4,
@@ -24,6 +24,7 @@ MAX_AGE_DAYS = 600
 
 class EnpaTorinoSpider(scrapy.Spider):
     name = "EnpaTorinoSpider"
+    _scraped = 0  # quick-test counter, bounded by SCRAPE_LIMIT_PER_SPIDER
     custom_settings = {
         "ITEM_PIPELINES": {
             "cucciolofinder.scrapers.pipelines.IdentityPipeline": 1,
@@ -51,6 +52,9 @@ class EnpaTorinoSpider(scrapy.Spider):
         has_recent = False
 
         for article in articles:
+            if SCRAPE_LIMIT_PER_SPIDER is not None and self._scraped >= SCRAPE_LIMIT_PER_SPIDER:
+                logger.info(f"SCRAPE_LIMIT_PER_SPIDER={SCRAPE_LIMIT_PER_SPIDER} reached, stopping")
+                return
             date_text = article.css("p.post-date::text").get()
             detail_url = article.css("h2.post-title a::attr(href)").get()
             name = article.css("h2.post-title a::text").get()
@@ -65,6 +69,7 @@ class EnpaTorinoSpider(scrapy.Spider):
             if post_date >= self.cutoff_date:
                 has_recent = True
                 logger.debug(f"[RECENT ITEM:] Name: {name} Date:({post_date.isoformat()}) -> URL: {detail_url}")
+                self._scraped += 1
                 yield response.follow(
                     detail_url,
                     callback=self.parse_dog_detail,
@@ -75,6 +80,8 @@ class EnpaTorinoSpider(scrapy.Spider):
 
         # next page if this page had recent items
         if has_recent:
+            if SCRAPE_LIMIT_PER_SPIDER is not None and self._scraped >= SCRAPE_LIMIT_PER_SPIDER:
+                return
             next_page = response.css("a.nextpostslink::attr(href)").get()
             if next_page:
                 logger.info(f"Following next page: {next_page}")
