@@ -9,7 +9,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
-from .models import Base, Breed, Dog, FieldProvenance
+from .models import Base, Breed, Dog
 
 DEFAULT_DB_PATH = Path(os.environ.get("DB_PATH", "data/db/cucciolofinder.db"))
 AKC_CSV = Path(os.environ.get("AKC_CSV_PATH", "data/datasets/akc-data-latest.csv"))
@@ -90,11 +90,6 @@ def reset_translations(session: Session) -> int:
         if updated:
             count += 1
 
-    # Clear translation provenance records
-    deleted = session.query(FieldProvenance).filter(
-        FieldProvenance.method == "llm"
-    ).delete()
-
     session.commit()
-    logger.info(f"Reset translations for {count} dogs, deleted {deleted} provenance records")
+    logger.info(f"Reset translations for {count} dogs")
     return count
