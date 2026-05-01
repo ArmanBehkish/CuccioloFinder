@@ -144,11 +144,67 @@ def test_extract_empty_list_leaves_column_null(monkeypatch, session, make_dog):
     assert dog.bad_with_from_desc is None
 
 
-def test_extract_unimplemented_backend_raises(monkeypatch, session, make_dog):
-    """Backends without an implementation surface NotImplementedError."""
+def test_extract_mistral_backend_dispatches_to_mistral_client(
+    monkeypatch, session, make_dog
+):
+    """When EXTRACT_BACKEND=mistral, dispatch goes through `mistral_extract_field`."""
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "mistral")
+
+    calls: list[str] = []
+
+    def fake_mistral(description_en, *, field_name, **_):
+        calls.append(field_name)
+        return "female" if field_name == "gender" else None
+
+    # Groq must NOT be called on the mistral path.
+    def fail_groq(*args, **kwargs):
+        raise AssertionError("groq_extract_field should not run on mistral path")
+
+    monkeypatch.setattr(extract_module, "mistral_extract_field", fake_mistral)
+    monkeypatch.setattr(extract_module, "groq_extract_field", fail_groq)
+
+    dog = make_dog(description_en="A female dog.")
+    enrich_from_desc(session)
+    session.refresh(dog)
+
+    assert dog.gender_from_desc == "female"
+    assert "gender" in calls and "size" in calls
+
+
+def test_extract_groq_falls_back_to_mistral_on_failure(
+    monkeypatch, session, make_dog
+):
+    """Groq raising + fallback enabled → Mistral is tried (loaded on demand by API)."""
+    from cucciolofinder.enrichment.groq_client import GroqError
+
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
+    monkeypatch.setattr(extract_module, "get_fallback_enabled", lambda: True)
+
+    def boom_groq(*args, **kwargs):
+        raise GroqError("simulated outage")
+
+    fallback_calls: list[str] = []
+
+    def fake_mistral(description_en, *, field_name, **_):
+        fallback_calls.append(field_name)
+        return "female" if field_name == "gender" else None
+
+    monkeypatch.setattr(extract_module, "groq_extract_field", boom_groq)
+    monkeypatch.setattr(extract_module, "mistral_extract_field", fake_mistral)
+
+    dog = make_dog(description_en="A female dog.")
+    enrich_from_desc(session)
+    session.refresh(dog)
+
+    assert dog.gender_from_desc == "female"
+    assert "gender" in fallback_calls
+
+
+def test_extract_unknown_backend_raises(monkeypatch, session, make_dog):
+    """Unknown backend names surface NotImplementedError."""
     import pytest
 
-    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "mistral")
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "openrouter")
     make_dog(description_en="anything")
 
     with pytest.raises(NotImplementedError):

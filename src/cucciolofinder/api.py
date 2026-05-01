@@ -94,6 +94,34 @@ def _load_search_model() -> None:
     _state.search_model_ok = True
 
 
+def _ensure_search_model_loaded() -> None:
+    """Lazy-load Mistral if not already loaded.
+
+    Used on the extraction-fallback path: when both backends are set to
+    Groq, Mistral is skipped at startup to save RAM. The worker only
+    triggers Mistral when Groq fails, and we load on demand here. The
+    worker is expected to call `/api/search-model/unload` once Stage 2/3
+    finishes, so Mistral doesn't sit in RAM between runs.
+    """
+    if _state.search_model_ok:
+        return
+    logger.info("Loading Mistral on demand (was skipped at startup)…")
+    _load_search_model()
+    logger.info(f"Mistral loaded on demand: {SEARCH_MODEL_PATH}")
+
+
+def _unload_search_model() -> None:
+    """Drop the Mistral model and free its memory."""
+    import gc
+
+    if _state.search_model is None:
+        return
+    _state.search_model = None
+    _state.search_model_ok = False
+    gc.collect()
+    logger.info("Mistral unloaded — memory released")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """only for context manager send blockings to threads"""
@@ -1089,6 +1117,123 @@ def translate_description(req: TranslateRequest):
 
     logger.info(f"Translation done in {elapsed:.1f}s ({len(translation)} chars): {translation[:200]}...")
     return {"translation": translation}
+
+
+#### POST /api/extract/field
+
+# Mistral counterpart of `groq_extract_field`. Same contract: extract one
+# field from an English description, return JSON `{"value": <value>}`.
+# The worker passes the field's `value_type` and (for enums/lists) a
+# small `allowed_values` list — kept lean to respect Mistral's prompt-size
+# budget. The API returns the parsed value untouched; the worker reuses
+# the shared coercion in `groq_client._coerce_extracted_value` to enforce
+# allowed-value membership.
+
+_EXTRACT_FIELD_PROMPT = """\
+[INST] You extract a single field from an English dog adoption listing description.
+
+Rules:
+- Output JSON only: {{"value": <value>}}.
+- If the description does NOT clearly mention the field, output {{"value": null}}.
+- Do NOT guess. Do NOT infer from indirect cues unless the description is explicit.
+- For enum fields: output MUST be one of the allowed values verbatim. If the meaning matches none of them, output null.
+- For list fields: output a JSON array of allowed values; empty array if none mentioned.
+- For free-text fields: output a short concise string verbatim from the description, or null.
+
+Field to extract: {field_name}
+{field_meaning}Output type: {value_type}
+{allowed_line}
+Description:
+{description}
+[/INST]"""
+
+
+class ExtractFieldRequest(BaseModel):
+    description: str
+    field_name: str
+    value_type: str  # "enum" | "list" | "string"
+    allowed_values: list[str] | None = None
+    field_description: str = ""
+
+
+@app.post("/api/extract/field")
+def extract_field(req: ExtractFieldRequest):
+    """Extract one field from an English description using Mistral.
+
+    Returns `{"value": <parsed JSON value>, "raw_output": <raw model text>}`.
+    Validation against `allowed_values` happens in the caller.
+
+    Mistral is lazy-loaded on first call when both backends are set to
+    Groq (Mistral is skipped at startup to save RAM). The worker calls
+    `/api/search-model/unload` after the pipeline finishes to free it.
+    """
+    import json
+    import re
+
+    try:
+        _ensure_search_model_loaded()
+    except Exception as exc:
+        logger.error(f"On-demand Mistral load failed: {exc}")
+        raise HTTPException(status_code=503, detail=f"Search model unavailable: {exc}")
+
+    desc = (req.description or "").strip()
+    if not desc:
+        return {"value": None, "raw_output": ""}
+
+    if req.value_type not in ("enum", "list", "string"):
+        raise HTTPException(status_code=400, detail=f"unknown value_type: {req.value_type}")
+    if req.value_type == "enum" and not req.allowed_values:
+        raise HTTPException(status_code=400, detail="enum requires allowed_values")
+
+    field_meaning = f"Field meaning: {req.field_description}\n" if req.field_description else ""
+    allowed_line = (
+        f"Allowed values (verbatim): {req.allowed_values}\n" if req.allowed_values else ""
+    )
+    prompt = _EXTRACT_FIELD_PROMPT.format(
+        field_name=req.field_name,
+        field_meaning=field_meaning,
+        value_type=req.value_type,
+        allowed_line=allowed_line,
+        description=desc,
+    )
+
+    llm = _state.search_model
+    t0 = time.time()
+    output = llm(prompt, max_tokens=200, stop=["[INST]", "\n\n"], temperature=0.0)
+    elapsed = time.time() - t0
+    raw = output["choices"][0]["text"].strip()
+    logger.info(f"Mistral extract {req.field_name} done in {elapsed:.1f}s: {raw!r}")
+
+    def _try_parse(text: str) -> dict | None:
+        try:
+            obj = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return obj if isinstance(obj, dict) else None
+
+    parsed = _try_parse(raw)
+    if parsed is None:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            parsed = _try_parse(match.group())
+
+    value = parsed.get("value") if parsed else None
+    return {"value": value, "raw_output": raw}
+
+
+#### POST /api/search-model/unload
+
+@app.post("/api/search-model/unload")
+def unload_search_model():
+    """Drop the Mistral model from memory.
+
+    Called by the worker after Stage 2/3 completes so Mistral (loaded on
+    demand for Groq fallback) doesn't sit in RAM between runs. No-op if
+    Mistral isn't loaded.
+    """
+    was_loaded = _state.search_model_ok
+    _unload_search_model()
+    return {"unloaded": was_loaded}
 
 
 #### Worker status

@@ -11,10 +11,10 @@ One LLM call per field per dog (user choice — isolates a bad response to
 a single column).
 
 Backend-agnostic: routes through `_extract_field`, which dispatches on
-`EXTRACT_BACKEND` (default `mistral`). Today only the `groq` branch is
-implemented; `mistral` / other branches raise `NotImplementedError`
-until their wrappers land. Add new providers by extending the dispatch
-table — the call sites do not change.
+`EXTRACT_BACKEND` (default `mistral`). Both `groq` (direct SDK call) and
+`mistral` (worker→API HTTP hop, llama-cpp on the other side) are wired.
+Add new providers by extending the dispatch table — the call sites do
+not change.
 """
 
 from loguru import logger
@@ -22,8 +22,9 @@ from sqlalchemy.orm import Session
 
 from cucciolofinder.database import Dog
 
-from .backends import get_extract_backend
+from .backends import get_extract_backend, get_fallback_enabled
 from .groq_client import GroqError, groq_extract_field
+from .mistral_client import MistralError, mistral_extract_field
 
 # (column, value_type, allowed_values, field_description)
 _EXTRACTION_FIELDS: list[tuple[str, str, list[str] | None, str]] = [
@@ -115,20 +116,42 @@ def _extract_field(
     field_description: str,
     backend: str,
 ) -> str | list[str] | None:
-    """Backend dispatcher for a single field extraction call."""
+    """Backend dispatcher for a single field extraction call.
+
+    On the Groq path, if Groq raises and `GROQ_FALLBACK_TO_MISTRAL=1`
+    (default), fall through to the Mistral HTTP path. The API endpoint
+    lazy-loads Mistral on first call, so this works even when both
+    backends are otherwise configured for Groq.
+    """
     if backend == "groq":
-        return groq_extract_field(
+        try:
+            return groq_extract_field(
+                description_en,
+                field_name=field_name,
+                value_type=value_type,
+                allowed_values=allowed_values,
+                field_description=field_description,
+            )
+        except GroqError as exc:
+            if get_fallback_enabled():
+                logger.warning(
+                    f"Groq extraction for {field_name} failed, falling back to Mistral: {exc}"
+                )
+                return mistral_extract_field(
+                    description_en,
+                    field_name=field_name,
+                    value_type=value_type,
+                    allowed_values=allowed_values,
+                    field_description=field_description,
+                )
+            raise
+    if backend == "mistral":
+        return mistral_extract_field(
             description_en,
             field_name=field_name,
             value_type=value_type,
             allowed_values=allowed_values,
             field_description=field_description,
-        )
-    if backend == "mistral":
-        raise NotImplementedError(
-            "Mistral extraction not implemented yet. Add a worker→API HTTP "
-            "endpoint (mirroring /api/translate/description) and a "
-            "mistral_extract_field client wrapper, then dispatch here."
         )
     raise NotImplementedError(
         f"Extraction backend '{backend}' is not implemented. "
@@ -171,7 +194,7 @@ def enrich_from_desc(session: Session, limit: int | None = None) -> int:
                     field_description=field_desc,
                     backend=backend,
                 )
-            except (GroqError, ExtractionUnavailable) as exc:
+            except (GroqError, MistralError, ExtractionUnavailable) as exc:
                 logger.warning(f"[{dog.name}] extract {column} failed: {exc}")
                 continue
 

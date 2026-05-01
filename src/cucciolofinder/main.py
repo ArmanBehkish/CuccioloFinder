@@ -27,6 +27,22 @@ def _set_worker_status(api_url: str, busy: bool) -> None:
         logger.warning(f"Failed to set worker status: {exc}")
 
 
+def _unload_search_model(api_url: str) -> None:
+    """Ask the API to drop Mistral from RAM.
+
+    The API lazy-loads Mistral as a Groq fallback during Stage 2/3; once
+    enrichment finishes we don't want it lingering in server memory.
+    """
+    import requests
+    try:
+        resp = requests.post(f"{api_url}/api/search-model/unload", timeout=30)
+        resp.raise_for_status()
+        if resp.json().get("unloaded"):
+            logger.info("Mistral unloaded on API after enrichment")
+    except Exception as exc:
+        logger.warning(f"Failed to unload Mistral on API: {exc}")
+
+
 if __name__ == "__main__":
 
 
@@ -69,6 +85,9 @@ if __name__ == "__main__":
     logger.info("Starting breed detection...")
     with Session() as session:
         enrich_breed_detection(session)
+
+    # Drop Mistral from API RAM if it was lazy-loaded as a Groq fallback.
+    _unload_search_model(api_url)
 
     # Step 5: Data quality tests
     logger.info("Running data quality tests...")
