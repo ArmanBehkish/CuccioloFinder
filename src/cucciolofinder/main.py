@@ -18,6 +18,32 @@ from cucciolofinder.scrapers.enpatorino import EnpaTorinoSpider
 from cucciolofinder.scrapers.canileoasi import CanileOasiSpider
 
 
+def _check_api_reachable(api_url: str) -> bool:
+    """Probe `/api/health`. Returns True iff the API responds 2xx.
+
+    The worker can run a Groq-only pipeline without the API, but Mistral
+    fallback (Stage 2 extraction, search) requires it. We log a loud
+    warning so the operator knows the fallback won't fire if Groq fails.
+    """
+    import requests
+    try:
+        resp = requests.get(f"{api_url}/api/health", timeout=10)
+        if resp.ok:
+            logger.info(f"API reachable at {api_url}")
+            return True
+        logger.warning(
+            f"API at {api_url} returned HTTP {resp.status_code} — "
+            "Mistral fallback will not work if Groq fails."
+        )
+        return False
+    except Exception as exc:
+        logger.warning(
+            f"API at {api_url} not reachable ({exc}). "
+            "Worker will run Groq-only — Mistral fallback unavailable."
+        )
+        return False
+
+
 def _set_worker_status(api_url: str, busy: bool) -> None:
     """Signal worker busy/ready to the API container."""
     import requests
@@ -55,6 +81,7 @@ if __name__ == "__main__":
 
     import os
     api_url = os.environ.get("API_URL", "http://localhost:8000")
+    _check_api_reachable(api_url)
     _set_worker_status(api_url, busy=True)
 
     engine = get_engine()

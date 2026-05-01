@@ -28,8 +28,6 @@ class Breed(Base):
     name = Column(String, nullable=False, unique=True)
     vit_label = Column(String, unique=True, nullable=True)
 
-    dogs = relationship("Dog", back_populates="breed_rel", foreign_keys="Dog.breed_en")
-
 
 class Dog(Base):
     __tablename__ = "dogs"
@@ -61,14 +59,17 @@ class Dog(Base):
     size = Column(String)
     size_en = Column(String)
     size_from_desc = Column(String)
-    # `breed` only from structured field (if present)
-    # `breed_en` is translation-only (FK to breeds.name — canonical AKC)
-    # `breed_from_desc` is liberal free-form ("mixed", "Labrador mix", etc.) —
-    # NOT FK-constrained to breeds.name, by design.
-    # breed values from image / text-LLM / clustering / etc. live in
-    # `inferred_dog_breeds` (those ARE FK-constrained).
+    # `breed` is the structured field from the shelter (Italian or English).
+    # `breed_en` is its LLM translation — liberal free-form ("mixed",
+    # "Labrador mix", "German Shepherd", etc.). Not FK-constrained: the
+    # shelter's free-text inputs rarely match the canonical AKC catalogue,
+    # and forcing them to would mostly produce NULLs. The canonical
+    # catalogue is still used by `inferred_dog_breeds` (image / text-LLM /
+    # clustering pipelines), which DO have FK to `breeds.name`.
+    # `breed_from_desc` is the same shape as `breed_en` but extracted from
+    # the description rather than the structured field.
     breed = Column(String)
-    breed_en = Column(String, ForeignKey("breeds.name"), nullable=True)
+    breed_en = Column(String, nullable=True)
     breed_from_desc = Column(String, nullable=True)
     fur = Column(String)
     fur_en = Column(String)
@@ -100,7 +101,6 @@ class Dog(Base):
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
-    breed_rel = relationship("Breed", back_populates="dogs", foreign_keys=[breed_en])
     images = relationship("DogImage", back_populates="dog", cascade="all, delete-orphan")
     inferred_breeds = relationship(
         "InferredDogBreed", back_populates="dog", cascade="all, delete-orphan"
