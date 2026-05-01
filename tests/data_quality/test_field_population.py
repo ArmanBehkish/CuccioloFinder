@@ -1,10 +1,10 @@
 import pytest
 from loguru import logger
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from cucciolofinder.database import Dog
 
-# Italian fields paired with their _en counterparts
+# Italian fields paired with their _en counterparts.
 FIELD_PAIRS = [
     ("description", "description_en"),
     ("gender", "gender_en"),
@@ -20,9 +20,20 @@ FIELD_PAIRS = [
     ("bad_with", "bad_with_en"),
 ]
 
-# Fields with no English counterpart
+# Fields with a `*_from_desc` LLM-extracted fallback. The display rule
+# is `<field>_en ?? <field>_from_desc`, so a field is considered usable
+# when at least one of the two columns is populated.
+#
+# `description` is intentionally absent — there is no
+# `description_from_desc` (the description IS the source).
+FROM_DESC_FIELDS = [
+    "gender", "age", "weight", "size", "breed", "fur",
+    "microchip", "sterilization", "vaccine", "deworming",
+    "good_with", "bad_with",
+]
+
+# Fields with no English counterpart and no `*_from_desc` fallback.
 SOLO_FIELDS = [
-    "weight",
     "post_date",
     "shelter_since",
     "scraped_at",
@@ -36,13 +47,18 @@ def total_dogs(db_session):
 
 @pytest.fixture(scope="session")
 def field_counts(db_session):
-    """Count non-NULL values for every field."""
+    """Count non-NULL values for every field, including `_from_desc`."""
     counts = {}
     for it_field, en_field in FIELD_PAIRS:
         it_col = getattr(Dog, it_field)
         en_col = getattr(Dog, en_field)
         counts[it_field] = db_session.query(func.count(Dog.id)).filter(it_col.isnot(None)).scalar()
         counts[en_field] = db_session.query(func.count(Dog.id)).filter(en_col.isnot(None)).scalar()
+    for field in FROM_DESC_FIELDS:
+        col = getattr(Dog, f"{field}_from_desc")
+        counts[f"{field}_from_desc"] = (
+            db_session.query(func.count(Dog.id)).filter(col.isnot(None)).scalar()
+        )
     for field in SOLO_FIELDS:
         col = getattr(Dog, field)
         counts[field] = db_session.query(func.count(Dog.id)).filter(col.isnot(None)).scalar()
@@ -54,7 +70,10 @@ def test_field_population_summary(total_dogs, field_counts):
     logger.info(f"\nTotal dogs: {total_dogs}")
 
     # Paired fields
-    logger.info(f"\n{'Field (IT)':<20} {'Count':>6} {'%':>6}   {'Field (EN)':<20} {'Count':>6} {'%':>6}")
+    logger.info(
+        f"\n{'Field (IT)':<20} {'Count':>6} {'%':>6}   "
+        f"{'Field (EN)':<20} {'Count':>6} {'%':>6}"
+    )
     logger.info("-" * 72)
     for it_field, en_field in FIELD_PAIRS:
         it_count = field_counts[it_field]
@@ -65,6 +84,14 @@ def test_field_population_summary(total_dogs, field_counts):
             f"{it_field:<20} {it_count:>6} {it_pct:>5.1f}%   "
             f"{en_field:<20} {en_count:>6} {en_pct:>5.1f}%"
         )
+
+    # `*_from_desc` fallbacks
+    logger.info(f"\n{'Field (from_desc)':<25} {'Count':>6} {'%':>6}")
+    logger.info("-" * 39)
+    for field in FROM_DESC_FIELDS:
+        count = field_counts[f"{field}_from_desc"]
+        pct = (count / total_dogs * 100) if total_dogs else 0
+        logger.info(f"{field + '_from_desc':<25} {count:>6} {pct:>5.1f}%")
 
     # Solo fields
     logger.info(f"\n{'Field':<20} {'Count':>6} {'%':>6}")
@@ -85,10 +112,29 @@ def test_italian_field_populated(it_field, en_field, field_counts):
 
 
 @pytest.mark.parametrize("it_field,en_field", FIELD_PAIRS)
-def test_english_field_populated(it_field, en_field, field_counts):
-    """Each English field should be populated for at least one dog (enrichment ran)."""
-    count = field_counts[en_field]
-    assert count > 0, f"English field '{en_field}' is NULL for every dog — enrichment may not have run"
+def test_field_value_available(it_field, en_field, field_counts, db_session):
+    """Each field must have a usable value (`_en` OR `_from_desc`) for ≥1 dog.
+
+    `description` only has `description_en` — no `_from_desc` sibling.
+    """
+    if it_field == "description":
+        count = field_counts[en_field]
+        assert count > 0, (
+            f"'{en_field}' is NULL for every dog — translation may not have run"
+        )
+        return
+
+    en_col = getattr(Dog, en_field)
+    fd_col = getattr(Dog, f"{it_field}_from_desc")
+    count = (
+        db_session.query(func.count(Dog.id))
+        .filter(or_(en_col.isnot(None), fd_col.isnot(None)))
+        .scalar()
+    )
+    assert count > 0, (
+        f"Neither '{en_field}' nor '{it_field}_from_desc' is populated for any dog "
+        "— translation and description-extraction stages may not have run"
+    )
 
 
 @pytest.mark.parametrize("field", SOLO_FIELDS)

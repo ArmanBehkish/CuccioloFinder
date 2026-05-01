@@ -9,11 +9,27 @@ from scrapy.pipelines.images import ImagesPipeline
 from cucciolofinder.database import (
     Dog,
     DogImage,
+    InferredDogBreed,
     get_engine,
     get_session,
     init_db,
     resolve_dog_identity,
 )
+
+FROM_DESC_COLUMNS = [
+    "gender_from_desc", "age_from_desc", "weight_from_desc", "size_from_desc",
+    "breed_from_desc", "fur_from_desc", "microchip_from_desc",
+    "sterilization_from_desc", "vaccine_from_desc", "deworming_from_desc",
+    "good_with_from_desc", "bad_with_from_desc",
+]
+
+# Breed-inference methods that derive their result from the dog's
+# description text. When `description` changes, only rows with these
+# methods are invalidated in `inferred_dog_breeds`. Image-based methods
+# (`image`, `image_2nd`) depend on photos, not description, so they
+# survive description-only changes — re-running the image sub-pipeline
+# is the only way to refresh those.
+DESCRIPTION_DERIVED_BREED_METHODS = frozenset({"text_embedding", "text_llm"})
 
 
 SPIDER_SOURCE_MAP = {
@@ -214,14 +230,38 @@ class DatabasePipeline:
                     )
                     raise DropItem("unchanged")
 
+                description_changed = False
                 for key, value in dog_data.items():
                     old_value = getattr(existing, key)
                     setattr(existing, key, value)
-                    if old_value != value and key in TRANSLATABLE_FIELDS:
-                        en_field = f"{key}_en"
-                        if hasattr(existing, en_field):
-                            setattr(existing, en_field, None)
-                            logger.debug(f"Cleared {en_field} for dog '{existing.name}' (field changed)")
+                    if old_value != value:
+                        if key == "description":
+                            description_changed = True
+                        if key in TRANSLATABLE_FIELDS:
+                            en_field = f"{key}_en"
+                            if hasattr(existing, en_field):
+                                setattr(existing, en_field, None)
+                                logger.debug(f"Cleared {en_field} for dog '{existing.name}' (field changed)")
+
+                if description_changed:
+                    for col in FROM_DESC_COLUMNS:
+                        setattr(existing, col, None)
+                    deleted = (
+                        session.query(InferredDogBreed)
+                        .filter(
+                            InferredDogBreed.dog_id == existing.id,
+                            InferredDogBreed.method.in_(
+                                DESCRIPTION_DERIVED_BREED_METHODS
+                            ),
+                        )
+                        .delete(synchronize_session=False)
+                    )
+                    logger.debug(
+                        f"Description changed for dog '{existing.name}': "
+                        f"cleared *_from_desc and deleted {deleted} "
+                        "description-derived inferred_dog_breeds rows "
+                        "(image-based rows preserved)"
+                    )
                 dog = existing
             else:
                 dog = Dog(

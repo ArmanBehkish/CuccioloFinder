@@ -222,6 +222,138 @@ def _try_parse_json(text: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Per-field extraction from an English description (Stage 2)
+# ---------------------------------------------------------------------------
+
+_EXTRACT_FIELD_RULES = (
+    "You extract a single field from an English dog adoption listing description.\n"
+    "\n"
+    "Rules:\n"
+    "- Output JSON only: {\"value\": <value>}.\n"
+    "- If the description does NOT clearly mention the field, output {\"value\": null}.\n"
+    "- Do NOT guess. Do NOT infer from indirect cues unless the description is "
+    "explicit.\n"
+    "- For enum fields: output MUST be one of the allowed values verbatim. "
+    "If the meaning matches none of them, output null.\n"
+    "- For list fields: output a JSON array of allowed values; empty array if "
+    "none mentioned.\n"
+    "- For free-text fields: output a short concise string verbatim from the "
+    "description, or null."
+)
+
+
+def groq_extract_field(
+    description_en: str,
+    field_name: str,
+    *,
+    value_type: str,
+    allowed_values: list[str] | None = None,
+    field_description: str = "",
+) -> str | list[str] | None:
+    """Extract one field from an English description via Groq.
+
+    `value_type` is one of:
+      - "enum"   → returns a string from `allowed_values`, or None.
+      - "list"   → returns a list[str] subset of `allowed_values` (possibly empty).
+      - "string" → returns a free-form short string, or None.
+
+    Returns None when the description does not carry the field. The caller
+    is responsible for any further validation (e.g. breed FK lookup).
+    """
+    if not description_en or not description_en.strip():
+        return None
+    if value_type not in ("enum", "list", "string"):
+        raise ValueError(f"unknown value_type: {value_type}")
+    if value_type == "enum" and not allowed_values:
+        raise ValueError("enum requires allowed_values")
+
+    user_lines = [f"Field to extract: {field_name}"]
+    if field_description:
+        user_lines.append(f"Field meaning: {field_description}")
+    user_lines.append(f"Output type: {value_type}")
+    if allowed_values:
+        user_lines.append(f"Allowed values (verbatim): {allowed_values}")
+    user_lines.append("")
+    user_lines.append("Description:")
+    user_lines.append(description_en.strip())
+    user_content = "\n".join(user_lines)
+
+    messages = [
+        {"role": "system", "content": _EXTRACT_FIELD_RULES},
+        {"role": "user", "content": user_content},
+    ]
+    raw = _chat_completion(
+        messages,
+        json_mode=True,
+        temperature=0.0,
+        max_tokens=200,
+    ).strip()
+
+    parsed = _try_parse_extract_json(raw)
+    if parsed is None:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            parsed = _try_parse_extract_json(match.group())
+    if parsed is None:
+        logger.warning(f"Groq extraction returned non-JSON for {field_name}: {raw!r}")
+        return None
+
+    value = parsed.get("value")
+    return _coerce_extracted_value(field_name, value, value_type, allowed_values)
+
+
+def _try_parse_extract_json(text: str) -> dict | None:
+    try:
+        obj = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    return obj
+
+
+def _coerce_extracted_value(
+    field_name: str,
+    value,
+    value_type: str,
+    allowed_values: list[str] | None,
+) -> str | list[str] | None:
+    """Validate the extracted value; return None on any mismatch."""
+    if value is None:
+        return None
+
+    if value_type == "enum":
+        if not isinstance(value, str):
+            logger.warning(f"Extraction for {field_name}: expected str, got {type(value).__name__}")
+            return None
+        v = value.strip()
+        if not v:
+            return None
+        if allowed_values and v not in allowed_values:
+            logger.warning(
+                f"Extraction for {field_name}: '{v}' not in allowed values; dropping"
+            )
+            return None
+        return v
+
+    if value_type == "list":
+        if not isinstance(value, list):
+            logger.warning(f"Extraction for {field_name}: expected list, got {type(value).__name__}")
+            return None
+        cleaned = [str(v).strip() for v in value if str(v).strip()]
+        if allowed_values:
+            cleaned = [v for v in cleaned if v in allowed_values]
+        return cleaned  # may be empty
+
+    # value_type == "string"
+    if not isinstance(value, str):
+        logger.warning(f"Extraction for {field_name}: expected str, got {type(value).__name__}")
+        return None
+    v = value.strip()
+    return v or None
+
+
+# ---------------------------------------------------------------------------
 # Liveness probe (for /api/health)
 # ---------------------------------------------------------------------------
 

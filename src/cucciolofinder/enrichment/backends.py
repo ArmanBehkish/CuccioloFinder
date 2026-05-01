@@ -29,6 +29,11 @@ def get_search_backend() -> str:
     return (os.environ.get("SEARCH_BACKEND") or _DEFAULT_BACKEND).strip().lower()
 
 
+def get_extract_backend() -> str:
+    """Backend for Stage-2 description-extraction calls."""
+    return (os.environ.get("EXTRACT_BACKEND") or _DEFAULT_BACKEND).strip().lower()
+
+
 def get_fallback_enabled() -> bool:
     raw = (os.environ.get("GROQ_FALLBACK_TO_MISTRAL") or "1").strip()
     return raw == "1"

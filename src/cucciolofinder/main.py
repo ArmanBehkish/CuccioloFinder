@@ -4,8 +4,12 @@ from loguru import logger
 
 load_dotenv()
 
-from cucciolofinder.database import get_engine, get_session, init_db, reset_translations
-from cucciolofinder.enrichment import enrich_breed_detection, enrich_translations
+from cucciolofinder.database import get_engine, get_session, init_db
+from cucciolofinder.enrichment import (
+    enrich_breed_detection,
+    enrich_from_desc,
+    enrich_translations,
+)
 from cucciolofinder.enrichment.backends import validate_backend_config
 from cucciolofinder.scrapers.quattrozampeinfamiglia import QuattroZampeSpider
 from cucciolofinder.scrapers.alberodimais import AlberoDiMaisSpider
@@ -27,7 +31,9 @@ if __name__ == "__main__":
 
 
     # Scheduled production flow:
-    # reset_translations() → scrape all spiders + pipelines → enrich_translations()
+    # scrape (per-field invalidation in DatabasePipeline) →
+    # enrich_translations → enrich_from_desc → enrich_breed_detection
+    # → data-quality tests → API cache refresh → API tests
 
     validate_backend_config(exit_on_error=True)
 
@@ -48,19 +54,23 @@ if __name__ == "__main__":
     process.crawl(CanileOasiSpider)
     process.start()
 
-    # Step 2: Enrich translations
+    # Step 2: Enrich translations (Stage 1)
     logger.info("Starting translation enrichment...")
     Session = get_session(engine)
     with Session() as session:
-        reset_translations(session)
-        enrich_translations(session)  
+        enrich_translations(session)
 
-    # Step 3: Breed detection (image + text profile)
+    # Step 3: Description-extraction fallbacks (Stage 2)
+    logger.info("Starting description-extraction enrichment...")
+    with Session() as session:
+        enrich_from_desc(session)
+
+    # Step 4: Breed detection sub-pipelines (Stage 3 — writes to inferred_dog_breeds)
     logger.info("Starting breed detection...")
     with Session() as session:
         enrich_breed_detection(session)
 
-    # Step 4: Data quality tests
+    # Step 5: Data quality tests
     logger.info("Running data quality tests...")
     import subprocess
     result = subprocess.run(
@@ -72,7 +82,7 @@ if __name__ == "__main__":
     else:
         logger.info("Data quality tests passed")
 
-    # Step 5: Notify running API to reload caches
+    # Step 6: Notify running API to reload caches
     logger.info("Refreshing API caches...")
     import requests
     try:
@@ -82,7 +92,7 @@ if __name__ == "__main__":
     except Exception as exc:
         logger.warning(f"API cache refresh failed (API may not be running): {exc}")
 
-    # Step 6: API contract tests (against live API)
+    # Step 7: API contract tests (against live API)
     logger.info("Running API tests...")
     result = subprocess.run(
         ["uv", "run", "pytest", "tests/api/", "-v", "-s"],

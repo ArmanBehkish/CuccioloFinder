@@ -13,7 +13,14 @@ SHELTER_SITES: dict[str, ShelterSite] = {
     "canileoasi":ShelterSite(url="https://canileoasi.it/adozioni/"),
 }
 
-# Quick-test scrape limit. 
+# Quick-test scrape limit.
 # Integer for limited number
 # None for Production
 SCRAPE_LIMIT_PER_SPIDER: int | None = 3
+
+# Breed-inference sub-pipelines to run during enrichment.
+# Each entry corresponds to a `method` value written to inferred_dog_breeds.
+# Available: "image", "text_embedding", "categorical", "clustering".
+# Default: all implemented sub-pipelines. Stubs ("categorical", "clustering")
+# are accepted but no-op until implemented.
+BREED_DETECTION_PIPELINES: list[str] = ["image", "text_embedding"]

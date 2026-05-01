@@ -61,12 +61,15 @@ class Dog(Base):
     size = Column(String)
     size_en = Column(String)
     size_from_desc = Column(String)
-    # `breed` / `breed_en` are translation-only (no detection). All inferred
+    # `breed` only from structured field (if present)
+    # `breed_en` is translation-only (FK to breeds.name — canonical AKC)
+    # `breed_from_desc` is liberal free-form ("mixed", "Labrador mix", etc.) —
+    # NOT FK-constrained to breeds.name, by design.
     # breed values from image / text-LLM / clustering / etc. live in
-    # `inferred_dog_breeds`.
+    # `inferred_dog_breeds` (those ARE FK-constrained).
     breed = Column(String)
     breed_en = Column(String, ForeignKey("breeds.name"), nullable=True)
-    breed_from_desc = Column(String, ForeignKey("breeds.name"), nullable=True)
+    breed_from_desc = Column(String, nullable=True)
     fur = Column(String)
     fur_en = Column(String)
     fur_from_desc = Column(String)

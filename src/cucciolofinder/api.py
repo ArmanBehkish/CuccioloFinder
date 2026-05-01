@@ -161,8 +161,8 @@ def _reload_caches() -> int:
     import json
     from sqlalchemy import distinct, func, select
 
-    from .database.models import Dog
-    from .enrichment.profile_builder import normalize_age, normalize_weight
+    from .database.models import Breed, Dog
+    from .enrichment.normalizers import normalize_age, normalize_weight
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
     # TODO: remove debug logging after cache issue is resolved
@@ -188,7 +188,14 @@ def _reload_caches() -> int:
         enums["source_site"] = distinct_non_null(Dog.source_site)
         enums["gender_en"] = distinct_non_null(Dog.gender_en)
         enums["size_en"] = distinct_non_null(Dog.size_en)
-        enums["breed_en"] = distinct_non_null(Dog.breed_en)
+        # Breed dropdown sources the canonical AKC catalogue (not distinct
+        # values from `dogs.breed_en`), so users can filter on any approved
+        # breed even when the dataset doesn't currently contain it.
+        enums["breed_en"] = [
+            b for (b,) in session.execute(
+                select(Breed.name).order_by(Breed.name)
+            ).all() if b
+        ]
         enums["age_en"] = distinct_non_null(Dog.age_en)
         enums["fur_en"] = distinct_non_null(Dog.fur_en)
         enums["microchip_en"] = distinct_non_null(Dog.microchip_en)
@@ -423,15 +430,16 @@ def filter_dogs(params: FilterDogsParams = Depends()):
     from sqlalchemy.orm import selectinload
 
     from .database.models import Dog
-    from .enrichment.profile_builder import normalize_age, normalize_weight
+    from .enrichment.normalizers import normalize_age, normalize_weight
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
     SessionLocal = get_session(engine)
 
     with SessionLocal() as session:
-        q = select(Dog).options(selectinload(Dog.images)).where(
-            Dog.superseded_at.is_(None)
-        )
+        q = select(Dog).options(
+            selectinload(Dog.images),
+            selectinload(Dog.inferred_breeds),
+        ).where(Dog.superseded_at.is_(None))
 
         # SQL-level filters
         if params.source_site:
@@ -463,50 +471,58 @@ def filter_dogs(params: FilterDogsParams = Depends()):
 
         dogs = session.execute(q).scalars().all()
 
-    # Python post-filters (fields derived at runtime, not stored in DB)
-    if params.age:
-        dogs = [d for d in dogs if normalize_age(d.age_en) == params.age]
-    if params.weight:
-        dogs = [d for d in dogs if normalize_weight(d.weight) == params.weight]
-    if params.shelter_since_from or params.shelter_since_to:
-        filtered = []
-        for d in dogs:
-            parsed = _try_parse_date(d.shelter_since)
-            if parsed is None:
-                continue
-            if params.shelter_since_from and parsed < params.shelter_since_from:
-                continue
-            if params.shelter_since_to and parsed > params.shelter_since_to:
-                continue
-            filtered.append(d)
-        dogs = filtered
+        # Python post-filters (fields derived at runtime, not stored in DB)
+        if params.age:
+            dogs = [d for d in dogs if normalize_age(d.age_en) == params.age]
+        if params.weight:
+            dogs = [d for d in dogs if normalize_weight(d.weight) == params.weight]
+        if params.shelter_since_from or params.shelter_since_to:
+            filtered = []
+            for d in dogs:
+                parsed = _try_parse_date(d.shelter_since)
+                if parsed is None:
+                    continue
+                if params.shelter_since_from and parsed < params.shelter_since_from:
+                    continue
+                if params.shelter_since_to and parsed > params.shelter_since_to:
+                    continue
+                filtered.append(d)
+            dogs = filtered
 
-    total = len(dogs)
-    offset = (params.page - 1) * params.page_size
+        total = len(dogs)
+        offset = (params.page - 1) * params.page_size
 
-    page_dogs = dogs[offset : offset + params.page_size]
+        page_dogs = dogs[offset : offset + params.page_size]
 
-    dog_list = []
-    for dog in page_dogs:
-        thumbnail = None
-        if dog.images:
-            first = min(
-                dog.images,
-                key=lambda img: img.position if img.position is not None else 999,
-            )
-            thumbnail = _image_url(first)
-        dog_list.append({
-            "id": dog.id,
-            "name": dog.name,
-            "source_site": dog.source_site,
-            "gender_en": dog.gender_en,
-            "age_en": dog.age_en,
-            "size_en": dog.size_en,
-            "breed_en": dog.breed_en,
-            "fur_en": dog.fur_en,
-            "weight": dog.weight,
-            "thumbnail": thumbnail,
-        })
+        dog_list = []
+        for dog in page_dogs:
+            thumbnail = None
+            if dog.images:
+                first = min(
+                    dog.images,
+                    key=lambda img: img.position if img.position is not None else 999,
+                )
+                thumbnail = _image_url(first)
+            top = _top_inferred_breed(dog)
+            dog_list.append({
+                "id": dog.id,
+                "name": dog.name,
+                "source_site": dog.source_site,
+                "gender_en": dog.gender_en,
+                "gender_from_desc": dog.gender_from_desc,
+                "age_en": dog.age_en,
+                "age_from_desc": dog.age_from_desc,
+                "size_en": dog.size_en,
+                "size_from_desc": dog.size_from_desc,
+                "breed_en": dog.breed_en,
+                "breed_from_desc": dog.breed_from_desc,
+                "inferred_breed_top": top.model_dump() if top else None,
+                "fur_en": dog.fur_en,
+                "fur_from_desc": dog.fur_from_desc,
+                "weight": dog.weight,
+                "weight_from_desc": dog.weight_from_desc,
+                "thumbnail": thumbnail,
+            })
 
     return {
         "total": total,
@@ -523,9 +539,11 @@ class DogImageOut(BaseModel):
     position: int | None
 
 
-class BreedDetection(BaseModel):
-    breed: str
-    confidence: float
+class InferredBreedOut(BaseModel):
+    method: str
+    value: str
+    confidence: float | None
+    model_name: str | None
 
 
 class DogProfileOut(BaseModel):
@@ -536,20 +554,30 @@ class DogProfileOut(BaseModel):
     source_url: str
     description_en: str | None
     gender_en: str | None
+    gender_from_desc: str | None
     age_en: str | None
+    age_from_desc: str | None
     size_en: str | None
+    size_from_desc: str | None
     breed_en: str | None
-    breed_from_image: list[BreedDetection] | None
-    breed_from_text: BreedDetection | None
-    breed_combined_confidence: float | None
+    breed_from_desc: str | None
+    inferred_breeds: list[InferredBreedOut]
     fur_en: str | None
+    fur_from_desc: str | None
     weight: str | None
+    weight_from_desc: str | None
     microchip_en: str | None
+    microchip_from_desc: str | None
     sterilization_en: str | None
+    sterilization_from_desc: str | None
     vaccine_en: str | None
+    vaccine_from_desc: str | None
     deworming_en: str | None
+    deworming_from_desc: str | None
     good_with_en: list[str] | None
+    good_with_from_desc: list[str] | None
     bad_with_en: list[str] | None
+    bad_with_from_desc: list[str] | None
     post_date: str | None
     shelter_since: str | None
     images: list[DogImageOut]
@@ -561,7 +589,7 @@ def get_dog(dog_id: int):
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
-    from .database.models import Dog, FieldProvenance
+    from .database.models import Dog
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
     SessionLocal = get_session(engine)
@@ -570,67 +598,64 @@ def get_dog(dog_id: int):
         dog = session.execute(
             select(Dog)
             .where(Dog.id == dog_id, Dog.superseded_at.is_(None))
-            .options(selectinload(Dog.images))
+            .options(
+                selectinload(Dog.images),
+                selectinload(Dog.inferred_breeds),
+            )
         ).scalar_one_or_none()
 
         if dog is None:
             raise HTTPException(status_code=404, detail=f"Dog {dog_id} not found")
 
-        # Fetch all breed provenance records
-        breed_provs = session.execute(
-            select(FieldProvenance)
-            .where(FieldProvenance.dog_id == dog_id, FieldProvenance.field_name == "breed_en")
-        ).scalars().all()
+        inferred = [
+            InferredBreedOut(
+                method=ib.method,
+                value=ib.value,
+                confidence=ib.confidence,
+                model_name=ib.model_name,
+            )
+            for ib in dog.inferred_breeds
+        ]
 
-    # Build breed detection breakdown by method
-    prov_by_method = {p.method: p for p in breed_provs}
-
-    breed_from_image = None
-    img_1st = prov_by_method.get("image")
-    img_2nd = prov_by_method.get("image_2nd")
-    if img_1st:
-        entries = [BreedDetection(breed=img_1st.model_name, confidence=img_1st.confidence)]
-        if img_2nd:
-            entries.append(BreedDetection(breed=img_2nd.model_name, confidence=img_2nd.confidence))
-        breed_from_image = entries
-
-    breed_from_text = None
-    txt = prov_by_method.get("text")
-    if txt:
-        breed_from_text = BreedDetection(breed=txt.model_name, confidence=txt.confidence)
-
-    combined = prov_by_method.get("combined")
-    breed_combined_confidence = combined.confidence if combined else None
-
-    return DogProfileOut(
-        id=dog.id,
-        dog_uid=dog.dog_uid,
-        name=dog.name,
-        source_site=dog.source_site,
-        source_url=dog.source_url,
-        description_en=dog.description_en,
-        gender_en=dog.gender_en,
-        age_en=dog.age_en,
-        size_en=dog.size_en,
-        breed_en=dog.breed_en,
-        breed_from_image=breed_from_image,
-        breed_from_text=breed_from_text,
-        breed_combined_confidence=breed_combined_confidence,
-        fur_en=dog.fur_en,
-        weight=dog.weight,
-        microchip_en=dog.microchip_en,
-        sterilization_en=dog.sterilization_en,
-        vaccine_en=dog.vaccine_en,
-        deworming_en=dog.deworming_en,
-        good_with_en=dog.good_with_en,
-        bad_with_en=dog.bad_with_en,
-        post_date=str(dog.post_date) if dog.post_date else None,
-        shelter_since=dog.shelter_since,
-        images=[
-            DogImageOut(url=_image_url(img), position=img.position)
-            for img in sorted(dog.images, key=lambda img: img.position if img.position is not None else 999)
-        ],
-    )
+        return DogProfileOut(
+            id=dog.id,
+            dog_uid=dog.dog_uid,
+            name=dog.name,
+            source_site=dog.source_site,
+            source_url=dog.source_url,
+            description_en=dog.description_en,
+            gender_en=dog.gender_en,
+            gender_from_desc=dog.gender_from_desc,
+            age_en=dog.age_en,
+            age_from_desc=dog.age_from_desc,
+            size_en=dog.size_en,
+            size_from_desc=dog.size_from_desc,
+            breed_en=dog.breed_en,
+            breed_from_desc=dog.breed_from_desc,
+            inferred_breeds=inferred,
+            fur_en=dog.fur_en,
+            fur_from_desc=dog.fur_from_desc,
+            weight=dog.weight,
+            weight_from_desc=dog.weight_from_desc,
+            microchip_en=dog.microchip_en,
+            microchip_from_desc=dog.microchip_from_desc,
+            sterilization_en=dog.sterilization_en,
+            sterilization_from_desc=dog.sterilization_from_desc,
+            vaccine_en=dog.vaccine_en,
+            vaccine_from_desc=dog.vaccine_from_desc,
+            deworming_en=dog.deworming_en,
+            deworming_from_desc=dog.deworming_from_desc,
+            good_with_en=dog.good_with_en,
+            good_with_from_desc=dog.good_with_from_desc,
+            bad_with_en=dog.bad_with_en,
+            bad_with_from_desc=dog.bad_with_from_desc,
+            post_date=str(dog.post_date) if dog.post_date else None,
+            shelter_since=dog.shelter_since,
+            images=[
+                DogImageOut(url=_image_url(img), position=img.position)
+                for img in sorted(dog.images, key=lambda img: img.position if img.position is not None else 999)
+            ],
+        )
 
 
 #### POST /api/dogs/search
@@ -857,12 +882,42 @@ class DogSummaryOut(BaseModel):
     name: str
     source_site: str
     gender_en: str | None
+    gender_from_desc: str | None
     age_en: str | None
+    age_from_desc: str | None
     size_en: str | None
+    size_from_desc: str | None
     breed_en: str | None
+    breed_from_desc: str | None
+    # Highest-confidence row from `inferred_dog_breeds` (or None). The full
+    # candidate list lives on /api/dogs/{id} — kept off the summary to
+    # keep list payloads small.
+    inferred_breed_top: InferredBreedOut | None
     fur_en: str | None
+    fur_from_desc: str | None
     weight: str | None
+    weight_from_desc: str | None
     thumbnail: str | None
+
+
+def _top_inferred_breed(dog) -> InferredBreedOut | None:
+    """Return the highest-confidence inferred breed row, or None.
+
+    Rows with `confidence is None` are sorted last so they only win if no
+    confidence-bearing row exists.
+    """
+    if not dog.inferred_breeds:
+        return None
+    best = max(
+        dog.inferred_breeds,
+        key=lambda ib: (ib.confidence is not None, ib.confidence or 0.0),
+    )
+    return InferredBreedOut(
+        method=best.method,
+        value=best.value,
+        confidence=best.confidence,
+        model_name=best.model_name,
+    )
 
 
 class SearchResponse(BaseModel):
@@ -880,7 +935,7 @@ def search_dogs(req: SearchRequest):
     from sqlalchemy.orm import selectinload
 
     from .database.models import Dog
-    from .enrichment.profile_builder import normalize_age, normalize_weight
+    from .enrichment.normalizers import normalize_age, normalize_weight
 
     backend = get_search_backend()
     if backend == "mistral" and not _state.search_model_ok:
@@ -899,9 +954,10 @@ def search_dogs(req: SearchRequest):
     SessionLocal = get_session(engine)
 
     with SessionLocal() as session:
-        q = select(Dog).options(selectinload(Dog.images)).where(
-            Dog.superseded_at.is_(None)
-        )
+        q = select(Dog).options(
+            selectinload(Dog.images),
+            selectinload(Dog.inferred_breeds),
+        ).where(Dog.superseded_at.is_(None))
 
         # SQL-level filters from extracted fields
         if gender := extracted.get("gender"):
@@ -926,35 +982,42 @@ def search_dogs(req: SearchRequest):
 
         dogs = session.execute(q).scalars().all()
 
-    # post-filters
-    if age := extracted.get("age"):
-        dogs = [d for d in dogs if normalize_age(d.age_en) == age]
-    if weight := extracted.get("weight"):
-        dogs = [d for d in dogs if normalize_weight(d.weight) == weight]
+        # post-filters
+        if age := extracted.get("age"):
+            dogs = [d for d in dogs if normalize_age(d.age_en) == age]
+        if weight := extracted.get("weight"):
+            dogs = [d for d in dogs if normalize_weight(d.weight) == weight]
 
-    dogs = dogs[: req.limit]
+        dogs = dogs[: req.limit]
 
-    dog_list = []
-    for dog in dogs:
-        thumbnail = None
-        if dog.images:
-            first = min(
-                dog.images,
-                key=lambda img: img.position if img.position is not None else 999,
-            )
-            thumbnail = _image_url(first)
-        dog_list.append(DogSummaryOut(
-            id=dog.id,
-            name=dog.name,
-            source_site=dog.source_site,
-            gender_en=dog.gender_en,
-            age_en=dog.age_en,
-            size_en=dog.size_en,
-            breed_en=dog.breed_en,
-            fur_en=dog.fur_en,
-            weight=dog.weight,
-            thumbnail=thumbnail,
-        ))
+        dog_list = []
+        for dog in dogs:
+            thumbnail = None
+            if dog.images:
+                first = min(
+                    dog.images,
+                    key=lambda img: img.position if img.position is not None else 999,
+                )
+                thumbnail = _image_url(first)
+            dog_list.append(DogSummaryOut(
+                id=dog.id,
+                name=dog.name,
+                source_site=dog.source_site,
+                gender_en=dog.gender_en,
+                gender_from_desc=dog.gender_from_desc,
+                age_en=dog.age_en,
+                age_from_desc=dog.age_from_desc,
+                size_en=dog.size_en,
+                size_from_desc=dog.size_from_desc,
+                breed_en=dog.breed_en,
+                breed_from_desc=dog.breed_from_desc,
+                inferred_breed_top=_top_inferred_breed(dog),
+                fur_en=dog.fur_en,
+                fur_from_desc=dog.fur_from_desc,
+                weight=dog.weight,
+                weight_from_desc=dog.weight_from_desc,
+                thumbnail=thumbnail,
+            ))
 
     return SearchResponse(
         query=req.query,

@@ -1,48 +1,28 @@
+"""Breed-specific profile helpers: AKC reference mappers, zero-shot
+behavior classification, and the profile-text template used by the
+text-embedding sub-pipeline.
+
+Generic value normalizers (`normalize_size/fur/weight/age`,
+`parse_weight_kg`) live in `enrichment/normalizers.py` — they're used
+across the API and shouldn't depend on the breed package.
+"""
+
 import os
-import re
 from pathlib import Path
 
-from loguru import logger
+from ..normalizers import kg_to_category
 
+# AKC reference mappers — used to project AKC catalogue rows onto the
+# same shared vocabulary as shelter dogs so embeddings/profiles compare.
 
-# SIZE: Target categories (shared vocabulary for both AKC breeds and shelter dogs):
-#   small, medium, large, giant
-
-# English values (after translation by TranslationService)
-_SIZE_EN: dict[str, str] = {
-    "small": "small",
-    "medium": "medium",
-    "medium contained": "medium",
-    "medium-small": "small",
-    "medium-large": "large",
-    "large": "large",
-    "giant": "giant",
+# Approximate coat type from AKC grooming frequency.
+_AKC_GROOMING_TO_COAT: dict[str, str] = {
+    "occasional bath/brush": "short",
+    "weekly brushing": "medium",
+    "2-3 times a week brushing": "long",
+    "daily brushing": "long",
+    "specialty/professional": "long",
 }
-
-# Raw Italian values (fallback when _en field is not yet populated)
-_SIZE_IT: dict[str, str] = {
-    "piccola": "small",
-    "piccolo": "small",
-    "media": "medium",
-    "medio": "medium",
-    "media contenuta": "medium",
-    "medio-piccola": "small",
-    "medio-grande": "large",
-    "grande": "large",
-    "gigante": "giant",
-}
-
-
-def normalize_size(value: str | None) -> str | None:
-    """Normalize a shelter dog size value to an AKC-aligned category.
-
-    Tries the English map first, then falls back to the Italian map.
-    Returns None if the value cannot be mapped.
-    """
-    if not value:
-        return None
-    key = value.strip().lower()
-    return _SIZE_EN.get(key) or _SIZE_IT.get(key)
 
 
 def akc_height_to_size(min_height: float, max_height: float) -> str:
@@ -64,44 +44,6 @@ def akc_height_to_size(min_height: float, max_height: float) -> str:
     return "giant"
 
 
-# FUR:  Target categories (shared vocabulary): short, medium, long
-
-# English values
-_FUR_EN: dict[str, str] = {
-    "short": "short",
-    "medium": "medium",
-    "long": "long",
-}
-
-# Raw Italian values
-_FUR_IT: dict[str, str] = {
-    "corto": "short",
-    "medio": "medium",
-    "lungo": "long",
-}
-
-# Approximate coat type from AKC grooming frequency
-_AKC_GROOMING_TO_COAT: dict[str, str] = {
-    "occasional bath/brush": "short",
-    "weekly brushing": "medium",
-    "2-3 times a week brushing": "long",
-    "daily brushing": "long",
-    "specialty/professional": "long",
-}
-
-
-def normalize_fur(value: str | None) -> str | None:
-    """Normalize a shelter dog fur value to a coat type.
-
-    Tries the English map first, then falls back to the Italian map.
-    Returns None if the value cannot be mapped.
-    """
-    if not value:
-        return None
-    key = value.strip().lower()
-    return _FUR_EN.get(key) or _FUR_IT.get(key)
-
-
 def akc_grooming_to_coat(grooming_category: str | None) -> str | None:
     """Derive a coat type from an AKC grooming_frequency_category."""
     if not grooming_category:
@@ -109,89 +51,15 @@ def akc_grooming_to_coat(grooming_category: str | None) -> str | None:
     return _AKC_GROOMING_TO_COAT.get(grooming_category.strip().lower())
 
 
-# WEIGHT: Target categories (shared vocabulary):
-#   very light, light, medium, heavy, very heavy
-
-_WEIGHT_BINS: list[tuple[float, str]] = [
-    (7, "very light"),
-    (15, "light"),
-    (30, "medium"),
-    (50, "heavy"),
-]
-_WEIGHT_DEFAULT = "very heavy"
-
-_WEIGHT_KG_RE = re.compile(r"(\d+(?:[.,]\d+)?)")
-
-
-def parse_weight_kg(value: str | None) -> float | None:
-    """Extract a numeric kg value from a shelter weight string.
-
-    Handles formats like '15kg', '15 Kg', '15 kg', '15', '25'.
-    Returns None for unparseable values like 'non specificato'.
-    """
-    if not value:
-        return None
-    match = _WEIGHT_KG_RE.search(value)
-    if not match:
-        return None
-    return float(match.group(1).replace(",", "."))
-
-
-def _kg_to_category(kg: float) -> str:
-    for threshold, label in _WEIGHT_BINS:
-        if kg < threshold:
-            return label
-    return _WEIGHT_DEFAULT
-
-
-def normalize_weight(value: str | None) -> str | None:
-    """Parse a shelter weight string and return an AKC-aligned category."""
-    kg = parse_weight_kg(value)
-    if kg is None:
-        return None
-    return _kg_to_category(kg)
-
-
-# AGE: Target categories: puppy (<1 year), young (1–3 years), adult (4–7 years), senior (8+ years)
-
-def normalize_age(age_en: str | None) -> str | None:
-    """Derive age_category from an English age string like '3 years', '6 months'.
-
-    Returns one of: 'puppy', 'young', 'adult', 'senior', or None if unparseable.
-    """
-    import re
-    if not age_en:
-        return None
-    s = age_en.strip().lower()
-    months_match = re.search(r"(\d+)\s+month", s)
-    years_match = re.search(r"(\d+)\s+year", s)
-    if months_match:
-        months = int(months_match.group(1))
-        years = int(years_match.group(1)) if years_match else 0
-        total_years = years + months / 12
-    elif years_match:
-        total_years = int(years_match.group(1))
-    else:
-        return None
-
-    if total_years < 1:
-        return "puppy"
-    if total_years <= 3:
-        return "young"
-    if total_years <= 7:
-        return "adult"
-    return "senior"
-
-
 def akc_weight_to_category(min_weight: float, max_weight: float) -> str:
     """Categorize an AKC breed weight range (kg) using the midpoint."""
     avg = (min_weight + max_weight) / 2
-    return _kg_to_category(avg)
+    return kg_to_category(avg)
 
 
-# Behavior classification (zero-shot)
-# Uses zero-shot NLI to infer AKC-style behavioral traits from shelter
-# dog descriptions, good_with, and bad_with fields.
+# Behavior classification (zero-shot) — uses zero-shot NLI to infer
+# AKC-style behavioral traits from shelter dog descriptions, good_with,
+# and bad_with fields.
 
 DEFAULT_ZSC_MODEL = os.environ.get("ZSC_MODEL_ID", "facebook/bart-large-mnli")
 MODELS_DIR = Path(os.environ.get("MODELS_PATH", "data/models"))
@@ -482,7 +350,6 @@ def classify_behavior(
     return result
 
 
-# Final textual profile
 def build_profile_text(
     size: str | None,
     fur: str | None,
@@ -515,5 +382,3 @@ def build_profile_text(
     if fur:
         parts.append(f"coat: {fur}")
     return ". ".join(parts)
-
-
