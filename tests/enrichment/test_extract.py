@@ -4,6 +4,24 @@ from cucciolofinder.enrichment import extract as extract_module
 from cucciolofinder.enrichment.extract import enrich_from_desc
 
 
+def _stub_good_bad(monkeypatch, good=(), bad=()):
+    """Default stub for the combined good/bad_with extractor.
+
+    Tests that don't specifically exercise good/bad use this to keep the
+    extractor offline. Returns plain tuples; tests can override per-call.
+    """
+    monkeypatch.setattr(
+        extract_module,
+        "groq_extract_good_bad_with",
+        lambda _desc: (list(good), list(bad)),
+    )
+    monkeypatch.setattr(
+        extract_module,
+        "mistral_extract_good_bad_with",
+        lambda _desc: (list(good), list(bad)),
+    )
+
+
 def test_extract_populates_from_desc_columns(monkeypatch, session, make_dog):
     """Mocked LLM returns a value → that column gets populated."""
     monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
@@ -19,14 +37,13 @@ def test_extract_populates_from_desc_columns(monkeypatch, session, make_dog):
         "sterilization": "yes",
         "vaccine": "yes",
         "deworming": "yes",
-        "good_with": ["children", "other dogs"],
-        "bad_with": ["cats"],
     }
 
     def fake_extract(description_en, *, field_name, **_):
         return fake_returns.get(field_name)
 
     monkeypatch.setattr(extract_module, "groq_extract_field", fake_extract)
+    _stub_good_bad(monkeypatch, good=["children", "other dogs"], bad=["cats"])
 
     dog = make_dog(
         description_en="A friendly female labrador-mix dog who loves children.",
@@ -56,6 +73,7 @@ def test_extract_skips_already_populated_columns(monkeypatch, session, make_dog)
         return None
 
     monkeypatch.setattr(extract_module, "groq_extract_field", fake_extract)
+    _stub_good_bad(monkeypatch)
 
     make_dog(
         description_en="something",
@@ -66,6 +84,8 @@ def test_extract_skips_already_populated_columns(monkeypatch, session, make_dog)
 
     assert "gender" not in calls, "extractor should skip already-populated columns"
     assert "size" in calls and "breed" in calls
+    # good_with / bad_with no longer go through the per-field path.
+    assert "good_with" not in calls and "bad_with" not in calls
 
 
 def test_extract_skips_dogs_without_description_en(monkeypatch, session, make_dog):
@@ -75,10 +95,15 @@ def test_extract_skips_dogs_without_description_en(monkeypatch, session, make_do
     called = []
 
     def fake_extract(*args, **kwargs):
-        called.append(True)
+        called.append(("field",))
         return "value"
 
+    def fake_good_bad(*args, **kwargs):
+        called.append(("good_bad",))
+        return [], []
+
     monkeypatch.setattr(extract_module, "groq_extract_field", fake_extract)
+    monkeypatch.setattr(extract_module, "groq_extract_good_bad_with", fake_good_bad)
 
     make_dog(description_en=None)
     make_dog(description_en="")
@@ -97,6 +122,7 @@ def test_extract_independent_of_en_columns(monkeypatch, session, make_dog):
         "groq_extract_field",
         lambda *_, field_name, **__: "female" if field_name == "gender" else None,
     )
+    _stub_good_bad(monkeypatch)
 
     dog = make_dog(
         description_en="She is a wonderful dog.",
@@ -116,6 +142,7 @@ def test_extract_null_response_leaves_column_null(monkeypatch, session, make_dog
     monkeypatch.setattr(
         extract_module, "groq_extract_field", lambda *_, **__: None
     )
+    _stub_good_bad(monkeypatch)
 
     dog = make_dog(description_en="Some text without any signal.")
     n = enrich_from_desc(session)
@@ -128,13 +155,12 @@ def test_extract_null_response_leaves_column_null(monkeypatch, session, make_dog
 
 
 def test_extract_empty_list_leaves_column_null(monkeypatch, session, make_dog):
-    """Empty list result for `good_with`/`bad_with` is treated as no signal."""
+    """Empty `good_with`/`bad_with` from the combined call leaves columns NULL."""
     monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
     monkeypatch.setattr(
-        extract_module,
-        "groq_extract_field",
-        lambda *_, field_name, **__: [] if field_name in {"good_with", "bad_with"} else None,
+        extract_module, "groq_extract_field", lambda *_, **__: None
     )
+    _stub_good_bad(monkeypatch, good=[], bad=[])
 
     dog = make_dog(description_en="No social signals here.")
     enrich_from_desc(session)
@@ -144,60 +170,130 @@ def test_extract_empty_list_leaves_column_null(monkeypatch, session, make_dog):
     assert dog.bad_with_from_desc is None
 
 
+def test_extract_combined_good_bad_with_populates_both(monkeypatch, session, make_dog):
+    """Combined extractor returns two non-empty lists → both columns written."""
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
+    monkeypatch.setattr(extract_module, "groq_extract_field", lambda *_, **__: None)
+    _stub_good_bad(monkeypatch, good=["children", "female dogs"], bad=["cats"])
+
+    dog = make_dog(description_en="Loves kids and lady dogs, hates cats.")
+    enrich_from_desc(session)
+    session.refresh(dog)
+
+    assert dog.good_with_from_desc == ["children", "female dogs"]
+    assert dog.bad_with_from_desc == ["cats"]
+
+
+def test_extract_combined_call_skipped_when_both_already_populated(
+    monkeypatch, session, make_dog
+):
+    """If both good_with_from_desc and bad_with_from_desc are pre-populated,
+    the combined call is not made (the dog has no work for that side)."""
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
+    monkeypatch.setattr(extract_module, "groq_extract_field", lambda *_, **__: None)
+
+    calls: list[str] = []
+
+    def boom(_desc):
+        calls.append("called")
+        return [], []
+
+    monkeypatch.setattr(extract_module, "groq_extract_good_bad_with", boom)
+
+    make_dog(
+        description_en="something",
+        good_with_from_desc=["children"],
+        bad_with_from_desc=["cats"],
+    )
+    enrich_from_desc(session)
+
+    assert calls == [], "combined call should be skipped when both columns are populated"
+
+
 def test_extract_mistral_backend_dispatches_to_mistral_client(
     monkeypatch, session, make_dog
 ):
-    """When EXTRACT_BACKEND=mistral, dispatch goes through `mistral_extract_field`."""
+    """When EXTRACT_BACKEND=mistral, dispatch goes through Mistral client functions."""
     monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "mistral")
 
     calls: list[str] = []
 
-    def fake_mistral(description_en, *, field_name, **_):
+    def fake_mistral_field(description_en, *, field_name, **_):
         calls.append(field_name)
         return "female" if field_name == "gender" else None
+
+    def fake_mistral_good_bad(_desc):
+        calls.append("good_bad")
+        return ["people"], []
 
     # Groq must NOT be called on the mistral path.
     def fail_groq(*args, **kwargs):
         raise AssertionError("groq_extract_field should not run on mistral path")
 
-    monkeypatch.setattr(extract_module, "mistral_extract_field", fake_mistral)
+    def fail_groq_good_bad(*args, **kwargs):
+        raise AssertionError("groq_extract_good_bad_with should not run on mistral path")
+
+    monkeypatch.setattr(extract_module, "mistral_extract_field", fake_mistral_field)
+    monkeypatch.setattr(
+        extract_module, "mistral_extract_good_bad_with", fake_mistral_good_bad
+    )
     monkeypatch.setattr(extract_module, "groq_extract_field", fail_groq)
+    monkeypatch.setattr(extract_module, "groq_extract_good_bad_with", fail_groq_good_bad)
 
     dog = make_dog(description_en="A female dog.")
     enrich_from_desc(session)
     session.refresh(dog)
 
     assert dog.gender_from_desc == "female"
-    assert "gender" in calls and "size" in calls
+    assert "gender" in calls and "size" in calls and "good_bad" in calls
+    assert dog.good_with_from_desc == ["people"]
 
 
 def test_extract_groq_falls_back_to_mistral_on_failure(
     monkeypatch, session, make_dog
 ):
-    """Groq raising + fallback enabled → Mistral is tried (loaded on demand by API)."""
+    """Groq raising + fallback enabled → Mistral is tried (loaded on demand by API).
+
+    Covers BOTH the per-field Groq error and the combined good/bad_with Groq error.
+    """
     from cucciolofinder.enrichment.groq_client import GroqError
 
     monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
     monkeypatch.setattr(extract_module, "get_fallback_enabled", lambda: True)
 
-    def boom_groq(*args, **kwargs):
+    def boom_groq_field(*args, **kwargs):
         raise GroqError("simulated outage")
 
-    fallback_calls: list[str] = []
+    def boom_groq_good_bad(*_args, **_kwargs):
+        raise GroqError("simulated outage")
 
-    def fake_mistral(description_en, *, field_name, **_):
-        fallback_calls.append(field_name)
+    fallback_field_calls: list[str] = []
+    fallback_good_bad_calls: list[bool] = []
+
+    def fake_mistral_field(description_en, *, field_name, **_):
+        fallback_field_calls.append(field_name)
         return "female" if field_name == "gender" else None
 
-    monkeypatch.setattr(extract_module, "groq_extract_field", boom_groq)
-    monkeypatch.setattr(extract_module, "mistral_extract_field", fake_mistral)
+    def fake_mistral_good_bad(_desc):
+        fallback_good_bad_calls.append(True)
+        return ["children"], ["cats"]
+
+    monkeypatch.setattr(extract_module, "groq_extract_field", boom_groq_field)
+    monkeypatch.setattr(extract_module, "groq_extract_good_bad_with", boom_groq_good_bad)
+    monkeypatch.setattr(extract_module, "mistral_extract_field", fake_mistral_field)
+    monkeypatch.setattr(
+        extract_module, "mistral_extract_good_bad_with", fake_mistral_good_bad
+    )
 
     dog = make_dog(description_en="A female dog.")
     enrich_from_desc(session)
     session.refresh(dog)
 
     assert dog.gender_from_desc == "female"
-    assert "gender" in fallback_calls
+    assert "gender" in fallback_field_calls
+    assert fallback_good_bad_calls == [True]
+    assert dog.good_with_from_desc == ["children"]
+    assert dog.bad_with_from_desc == ["cats"]
 
 
 def test_extract_unknown_backend_raises(monkeypatch, session, make_dog):
@@ -205,6 +301,7 @@ def test_extract_unknown_backend_raises(monkeypatch, session, make_dog):
     import pytest
 
     monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "openrouter")
+    _stub_good_bad(monkeypatch)
     make_dog(description_en="anything")
 
     with pytest.raises(NotImplementedError):

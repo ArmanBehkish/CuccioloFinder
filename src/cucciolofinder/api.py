@@ -1221,6 +1221,98 @@ def extract_field(req: ExtractFieldRequest):
     return {"value": value, "raw_output": raw}
 
 
+#### POST /api/extract/good-bad-with
+
+# Combined extraction of good_with + bad_with in a single Mistral call.
+# Mirrors `groq_extract_good_bad_with`. The two lists are extracted
+# together so the model can place each topic in exactly one bucket —
+# a constraint that's impossible to honor across two independent calls.
+
+_GOOD_BAD_WITH_PROMPT = """\
+[INST] You extract two compatibility lists from an English dog adoption listing description.
+
+good_with = things/beings the dog gets along with or is suitable for.
+bad_with  = things/beings the dog does NOT get along with or is NOT suitable for.
+
+Rules:
+- Output JSON only: {{"good_with": [...], "bad_with": [...]}}.
+- Each list contains short lowercase tags like 'children', 'cats', 'other dogs', 'female dogs', 'male dogs', 'elderly', 'people', 'first-time owners', 'apartments without garden', 'small spaces', 'being left alone', 'hunting'.
+- Read BOTH explicit compatibility fields and natural-language phrases:
+  * 'Compatibility with Dogs: Good with females' -> good_with: 'female dogs'
+  * 'Cat Compatibility: Yes' -> good_with: 'cats'
+  * 'Cat Compatibility: No' -> bad_with: 'cats'
+  * 'Compatibility with Cats: To be evaluated' -> bad_with: 'cats' (treat 'to be evaluated' as a precaution)
+  * 'Need for Outdoor Space: Yes' -> bad_with: 'apartments without garden'
+  * 'He gets along with X' -> good_with: 'X'
+  * 'NOT SUITABLE FOR HUNTING' -> bad_with: 'hunting'
+  * 'should not be left alone in a yard 24/7' -> bad_with: 'being left alone'
+  * 'Being with people makes me happy' -> good_with: 'people'
+- A topic appears in EXACTLY ONE list. Never put the same tag in both.
+- Empty array if no signal for that side. Use lowercase tags.
+
+Description:
+{description}
+[/INST]"""
+
+
+class GoodBadWithRequest(BaseModel):
+    description: str
+
+
+@app.post("/api/extract/good-bad-with")
+def extract_good_bad_with(req: GoodBadWithRequest):
+    """Extract good_with + bad_with as a single Mistral call.
+
+    Returns `{"good_with": [...], "bad_with": [...], "raw_output": <text>}`.
+    """
+    import json
+    import re
+
+    try:
+        _ensure_search_model_loaded()
+    except Exception as exc:
+        logger.error(f"On-demand Mistral load failed: {exc}")
+        raise HTTPException(status_code=503, detail=f"Search model unavailable: {exc}")
+
+    desc = (req.description or "").strip()
+    if not desc:
+        return {"good_with": [], "bad_with": [], "raw_output": ""}
+
+    prompt = _GOOD_BAD_WITH_PROMPT.format(description=desc)
+    llm = _state.search_model
+    t0 = time.time()
+    output = llm(prompt, max_tokens=400, stop=["[INST]"], temperature=0.0)
+    elapsed = time.time() - t0
+    raw = output["choices"][0]["text"].strip()
+    logger.info(f"Mistral good/bad_with done in {elapsed:.1f}s: {raw!r}")
+
+    def _try_parse(text: str) -> dict | None:
+        try:
+            obj = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return obj if isinstance(obj, dict) else None
+
+    parsed = _try_parse(raw)
+    if parsed is None:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            parsed = _try_parse(match.group())
+
+    def _coerce(value) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(v).strip() for v in value if isinstance(v, str) and v.strip()]
+
+    good = _coerce(parsed.get("good_with")) if parsed else []
+    bad = _coerce(parsed.get("bad_with")) if parsed else []
+    # Defensive dedup mirroring the Groq path.
+    if good and bad:
+        good_lower = {g.lower() for g in good}
+        bad = [b for b in bad if b.lower() not in good_lower]
+    return {"good_with": good, "bad_with": bad, "raw_output": raw}
+
+
 #### POST /api/search-model/unload
 
 @app.post("/api/search-model/unload")

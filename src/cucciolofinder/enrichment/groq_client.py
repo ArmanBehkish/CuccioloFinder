@@ -302,6 +302,93 @@ def groq_extract_field(
     return _coerce_extracted_value(field_name, value, value_type, allowed_values)
 
 
+# ---------------------------------------------------------------------------
+# Combined good_with + bad_with extraction (Stage 2)
+# ---------------------------------------------------------------------------
+#
+# `good_with` and `bad_with` are extracted in a single call so the model sees
+# both lists at once and can place each topic in exactly one bucket — a
+# constraint that's impossible to honor across two independent calls.
+
+_GOOD_BAD_WITH_RULES = (
+    "You extract two compatibility lists from an English dog adoption "
+    "listing description.\n"
+    "\n"
+    "good_with = things/beings the dog gets along with or is suitable for.\n"
+    "bad_with  = things/beings the dog does NOT get along with or is "
+    "NOT suitable for.\n"
+    "\n"
+    "Rules:\n"
+    "- Output JSON only: {\"good_with\": [...], \"bad_with\": [...]}.\n"
+    "- Each list contains short lowercase tags like 'children', 'cats', "
+    "'other dogs', 'female dogs', 'male dogs', 'elderly', 'people', "
+    "'first-time owners', 'apartments without garden', 'small spaces', "
+    "'being left alone', 'hunting'.\n"
+    "- Read BOTH explicit compatibility fields and natural-language phrases:\n"
+    "  * 'Compatibility with Dogs: Good with females' -> good_with: 'female dogs'\n"
+    "  * 'Cat Compatibility: Yes' -> good_with: 'cats'\n"
+    "  * 'Cat Compatibility: No' -> bad_with: 'cats'\n"
+    "  * 'Compatibility with Cats: To be evaluated' -> bad_with: 'cats' "
+    "(treat 'to be evaluated' as a precaution, not a positive)\n"
+    "  * 'Need for Outdoor Space: Yes' -> bad_with: 'apartments without garden'\n"
+    "  * 'He gets along with X' -> good_with: 'X'\n"
+    "  * 'NOT SUITABLE FOR HUNTING' -> bad_with: 'hunting'\n"
+    "  * 'should not be left alone in a yard 24/7' -> bad_with: "
+    "'being left alone'\n"
+    "  * 'Being with people makes me happy' -> good_with: 'people'\n"
+    "- A topic appears in EXACTLY ONE list. Never put the same tag in both.\n"
+    "- If a topic is positive, do NOT also list it as negative (and vice versa).\n"
+    "- Empty array if no signal for that side. Use lowercase tags."
+)
+
+
+def groq_extract_good_bad_with(description_en: str) -> tuple[list[str], list[str]]:
+    """Extract good_with + bad_with as a single Groq call.
+
+    Returns (good_with, bad_with). Both lists may be empty. Returns
+    ([], []) when the description is empty or the model returns
+    unparseable JSON.
+    """
+    if not description_en or not description_en.strip():
+        return [], []
+
+    messages = [
+        {"role": "system", "content": _GOOD_BAD_WITH_RULES},
+        {"role": "user", "content": f"Description:\n{description_en.strip()}"},
+    ]
+    raw = _chat_completion(
+        messages,
+        json_mode=True,
+        temperature=0.0,
+        max_tokens=300,
+    ).strip()
+
+    parsed = _try_parse_extract_json(raw)
+    if parsed is None:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            parsed = _try_parse_extract_json(match.group())
+    if parsed is None:
+        logger.warning(f"Groq returned non-JSON for good/bad_with: {raw!r}")
+        return [], []
+
+    good = _coerce_string_list(parsed.get("good_with"))
+    bad = _coerce_string_list(parsed.get("bad_with"))
+    # Defensive dedup: if the model violated the exclusivity rule anyway,
+    # keep good_with and drop the duplicate from bad_with.
+    if good and bad:
+        good_lower = {g.lower() for g in good}
+        bad = [b for b in bad if b.lower() not in good_lower]
+    return good, bad
+
+
+def _coerce_string_list(value) -> list[str]:
+    """Coerce a JSON value into a list[str], dropping non-strings/empties."""
+    if not isinstance(value, list):
+        return []
+    return [str(v).strip() for v in value if isinstance(v, str) and v.strip()]
+
+
 def _try_parse_extract_json(text: str) -> dict | None:
     try:
         obj = json.loads(text)

@@ -19,11 +19,24 @@ COMPLEX_FIELDS = ["description", "age"]
 # mix", "shepherd-type" are all fine. No FK to the canonical AKC catalogue
 # (that lives in `inferred_dog_breeds`); shelter inputs rarely line up with it.
 _BREED_FIELD_DESCRIPTION = (
-    "the dog's breed as a SHORT free-form descriptive phrase. "
-    "It does NOT need to match any canonical breed list — accept "
-    "'mixed', 'Labrador mix', 'shepherd-type', 'pit bull mix', a "
-    "single canonical name, etc. Use null only when the input "
-    "gives no breed signal at all."
+    "the dog's breed — a recognizable breed name or a short "
+    "breed-typed phrase, translated to English when the input is "
+    "Italian. A breed refers to ancestry/lineage, NOT appearance "
+    "or character. "
+    "Accept: a canonical name ('Labrador Retriever', 'Beagle', "
+    "'Pastore Tedesco' -> 'German Shepherd'), a mix phrase "
+    "('Labrador mix', 'shepherd-type', 'pit bull mix'), or "
+    "'mixed' / 'mixed-breed' for unknown ancestry. The Italian "
+    "'meticcio' (or 'meticcia') means a dog of unknown / mixed "
+    "ancestry — translate it to 'mixed-breed'. "
+    "Return null for: pure size adjectives ('large', 'small', 'tiny', "
+    "'medium-sized'), coat or appearance adjectives ('fluffy', 'soft', "
+    "'all fluff and softness', 'short-haired'), color words, "
+    "temperament words ('friendly', 'energetic'), and any "
+    "poetic/metaphorical phrase that doesn't name a breed type "
+    "(e.g. 'ball of joy', 'a true gentleman'). "
+    "If the input only describes the dog's looks or character without "
+    "mentioning ancestry, return null."
 )
 
 

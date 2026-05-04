@@ -17,17 +17,26 @@ Add new providers by extending the dispatch table — the call sites do
 not change.
 """
 
+from datetime import date
+
 from loguru import logger
 from sqlalchemy.orm import Session
 
 from cucciolofinder.database import Dog
 
 from .backends import get_extract_backend, get_fallback_enabled
-from .groq_client import GroqError, groq_extract_field
-from .mistral_client import MistralError, mistral_extract_field
+from .groq_client import GroqError, groq_extract_field, groq_extract_good_bad_with
+from .mistral_client import (
+    MistralError,
+    mistral_extract_field,
+    mistral_extract_good_bad_with,
+)
 
 # (column, value_type, allowed_values, field_description)
-_EXTRACTION_FIELDS: list[tuple[str, str, list[str] | None, str]] = [
+# `age_from_desc` carries today's date so the LLM can resolve DOB phrases —
+# build the list per run via `_build_extraction_fields(today)`.
+def _build_extraction_fields(today: date) -> list[tuple[str, str, list[str] | None, str]]:
+    return [
     (
         "gender_from_desc", "enum",
         ["male", "female"],
@@ -36,7 +45,16 @@ _EXTRACTION_FIELDS: list[tuple[str, str, list[str] | None, str]] = [
     (
         "age_from_desc", "string",
         None,
-        "the dog's age (free-form short phrase, e.g. '3 years', 'puppy', 'senior')",
+        "the dog's age. Output a short free-form phrase like '3 years', "
+        "'6 months', '3.5 years', '2 weeks'. "
+        "If the description gives a date of birth instead of an age "
+        "(e.g. 'DOB 01/01/22', 'born in 2021', 'date of birth: March 2023', "
+        "'born approximately at the beginning of November 2024'), "
+        f"compute the dog's age from it relative to today ({today.isoformat()}) "
+        "and output the computed age (e.g. '4 years', '6 months'). "
+        "If only a year is given, assume mid-year. Two-digit years (e.g. '22') "
+        "refer to the 2000s. Use null only when the description gives "
+        "neither an age nor a date of birth.",
     ),
     (
         "weight_from_desc", "string",
@@ -57,11 +75,20 @@ _EXTRACTION_FIELDS: list[tuple[str, str, list[str] | None, str]] = [
     (
         "breed_from_desc", "string",
         None,
-        "the dog's breed as a SHORT free-form descriptive phrase. "
-        "It does NOT need to match any canonical breed list — accept "
-        "'mixed', 'Labrador mix', 'shepherd-type', 'pit bull mix', a "
-        "single canonical name, etc. Use null only when the description "
-        "gives no breed signal at all.",
+        "the dog's breed — a recognizable breed name or a short "
+        "breed-typed phrase. A breed refers to ancestry/lineage, NOT "
+        "appearance or character. "
+        "Accept: a canonical name ('Labrador Retriever', 'Beagle'), "
+        "a mix phrase ('Labrador mix', 'shepherd-type', 'pit bull mix'), "
+        "or 'mixed' / 'mixed-breed' for unknown ancestry. "
+        "Return null for: pure size adjectives ('large', 'small', 'tiny', "
+        "'medium-sized'), coat or appearance adjectives ('fluffy', 'soft', "
+        "'all fluff and softness', 'short-haired'), color words, "
+        "temperament words ('friendly', 'energetic'), and any "
+        "poetic/metaphorical phrase that doesn't name a breed type "
+        "(e.g. 'ball of joy', 'a true gentleman'). "
+        "If the description only describes the dog's looks or character "
+        "without mentioning ancestry, return null.",
     ),
     (
         "fur_from_desc", "enum",
@@ -88,19 +115,9 @@ _EXTRACTION_FIELDS: list[tuple[str, str, list[str] | None, str]] = [
         ["yes", "no"],
         "whether the dog is dewormed",
     ),
-    (
-        "good_with_from_desc", "list",
-        None,
-        "things or beings the dog gets along well with "
-        "(short tags like 'children', 'other dogs', 'cats')",
-    ),
-    (
-        "bad_with_from_desc", "list",
-        None,
-        "things or beings the dog does NOT get along with "
-        "(short tags like 'children', 'other dogs', 'cats')",
-    ),
-]
+    # good_with_from_desc + bad_with_from_desc are extracted together via
+    # `_extract_good_bad_with` (single LLM call, mutually exclusive lists).
+    ]
 
 
 class ExtractionUnavailable(RuntimeError):
@@ -159,6 +176,33 @@ def _extract_field(
     )
 
 
+def _extract_good_bad_with(
+    description_en: str,
+    backend: str,
+) -> tuple[list[str], list[str]]:
+    """Combined good_with + bad_with dispatcher.
+
+    Mirrors `_extract_field`'s backend dispatch and Groq -> Mistral
+    fallback semantics, but for the joint extraction of both
+    compatibility lists in one LLM call.
+    """
+    if backend == "groq":
+        try:
+            return groq_extract_good_bad_with(description_en)
+        except GroqError as exc:
+            if get_fallback_enabled():
+                logger.warning(
+                    f"Groq good/bad_with failed, falling back to Mistral: {exc}"
+                )
+                return mistral_extract_good_bad_with(description_en)
+            raise
+    if backend == "mistral":
+        return mistral_extract_good_bad_with(description_en)
+    raise NotImplementedError(
+        f"Extraction backend '{backend}' is not implemented for good/bad_with."
+    )
+
+
 def enrich_from_desc(session: Session, limit: int | None = None) -> int:
     """Populate *_from_desc columns from description_en via LLM extraction.
 
@@ -166,6 +210,8 @@ def enrich_from_desc(session: Session, limit: int | None = None) -> int:
     """
     backend = get_extract_backend()
     logger.info(f"Description extraction backend: {backend}")
+
+    fields = _build_extraction_fields(date.today())
 
     query = (
         session.query(Dog)
@@ -181,7 +227,7 @@ def enrich_from_desc(session: Session, limit: int | None = None) -> int:
     processed = 0
     for dog in dogs:
         wrote_any = False
-        for column, value_type, allowed, field_desc in _EXTRACTION_FIELDS:
+        for column, value_type, allowed, field_desc in fields:
             if getattr(dog, column, None) is not None:
                 continue  # already extracted
 
@@ -206,6 +252,25 @@ def enrich_from_desc(session: Session, limit: int | None = None) -> int:
             setattr(dog, column, value)
             wrote_any = True
             logger.info(f"[{dog.name}] {column} = {value!r}")
+
+        # Combined good_with + bad_with extraction (single call, mutually
+        # exclusive). Skip if both columns are already populated; if only
+        # one is None, still call so the dog gets symmetric coverage.
+        if dog.good_with_from_desc is None or dog.bad_with_from_desc is None:
+            try:
+                good, bad = _extract_good_bad_with(dog.description_en, backend)
+            except (GroqError, MistralError, ExtractionUnavailable) as exc:
+                logger.warning(f"[{dog.name}] good/bad_with extraction failed: {exc}")
+                good, bad = [], []
+
+            if dog.good_with_from_desc is None and good:
+                dog.good_with_from_desc = good
+                wrote_any = True
+                logger.info(f"[{dog.name}] good_with_from_desc = {good!r}")
+            if dog.bad_with_from_desc is None and bad:
+                dog.bad_with_from_desc = bad
+                wrote_any = True
+                logger.info(f"[{dog.name}] bad_with_from_desc = {bad!r}")
 
         if wrote_any:
             processed += 1
