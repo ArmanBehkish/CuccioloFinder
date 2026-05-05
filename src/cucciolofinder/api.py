@@ -20,6 +20,8 @@ from .enrichment.backends import (
     BackendConfigError,
     any_backend_uses_groq,
     any_backend_uses_mistral,
+    any_backend_uses_openrouter,
+    get_extract_backend,
     get_fallback_enabled,
     get_search_backend,
     get_translation_backend,
@@ -866,7 +868,7 @@ def _extract_filters(query: str) -> tuple[dict, str]:
     """Dispatch filter extraction to the configured backend.
 
     Reads dynamic enum values from the cache, builds the shared system prompt
-    (with a top-N breed hint only on the Groq path — Mistral's context budget
+    (with a top-N breed hint on remote paths — Mistral's context budget
     can't afford the extra tokens), and post-processes against the same enum
     sets used to build the prompt.
     """
@@ -875,7 +877,9 @@ def _extract_filters(query: str) -> tuple[dict, str]:
     bad_with = enums.get("bad_with_en") or list(_GOOD_BAD_WITH_FALLBACK)
 
     backend = get_search_backend()
-    common_breeds = enums.get("breed_en_top", []) if backend == "groq" else []
+    common_breeds = (
+        enums.get("breed_en_top", []) if backend in ("groq", "openrouter") else []
+    )
     logger.info(f"Search extraction: backend={backend}, common_breeds={common_breeds}")
 
     system_prompt = _build_extraction_system_prompt(good_with, bad_with, common_breeds)
@@ -889,6 +893,22 @@ def _extract_filters(query: str) -> tuple[dict, str]:
                 logger.warning(f"Groq extraction failed, falling back to Mistral: {exc}")
                 # Mistral fallback: rebuild prompt without the breed hint to
                 # respect Mistral's prompt-size constraint.
+                mistral_prompt = _build_extraction_system_prompt(good_with, bad_with, [])
+                raw_filters, raw_output = _extract_filters_mistral(query, mistral_prompt)
+            else:
+                raise
+    elif backend == "openrouter":
+        from .enrichment.openrouter_client import (
+            OpenRouterError,
+            openrouter_extract_filters,
+        )
+        try:
+            raw_filters, raw_output = openrouter_extract_filters(query, system_prompt)
+        except OpenRouterError as exc:
+            if get_fallback_enabled() and _state.search_model_ok:
+                logger.warning(
+                    f"OpenRouter extraction failed, falling back to Mistral: {exc}"
+                )
                 mistral_prompt = _build_extraction_system_prompt(good_with, bad_with, [])
                 raw_filters, raw_output = _extract_filters_mistral(query, mistral_prompt)
             else:
@@ -970,12 +990,18 @@ def search_dogs(req: SearchRequest):
         raise HTTPException(status_code=503, detail="Search model not available")
 
     from .enrichment.groq_client import GroqError
+    from .enrichment.openrouter_client import OpenRouterError
     try:
         extracted, raw_output = _extract_filters(req.query)
     except GroqError as exc:
         raise HTTPException(
             status_code=503,
             detail=f"Groq extraction failed: {exc}",
+        ) from exc
+    except OpenRouterError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"OpenRouter extraction failed: {exc}",
         ) from exc
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
@@ -1364,11 +1390,12 @@ def get_worker_status():
 
 #### GET /api/health
 
-# 30 s in-memory cache for the Groq liveness probe. Health endpoints get
-# polled aggressively (load balancers, monitoring, frontend banner) — we
-# don't want each poll triggering an outbound HTTPS call to Groq.
-_GROQ_PROBE_CACHE_TTL = 30.0
+# 30 s in-memory cache for the remote liveness probes. Health endpoints
+# get polled aggressively (load balancers, monitoring, frontend banner)
+# — we don't want each poll triggering outbound HTTPS calls.
+_REMOTE_PROBE_CACHE_TTL = 30.0
 _groq_probe_cache: dict[str, float | bool] = {"at": 0.0, "responsive": False}
+_openrouter_probe_cache: dict[str, float | bool] = {"at": 0.0, "responsive": False}
 
 
 def _groq_responsive_cached() -> bool:
@@ -1376,12 +1403,26 @@ def _groq_responsive_cached() -> bool:
     from .enrichment.groq_client import is_responsive
 
     now = time.time()
-    if (now - float(_groq_probe_cache["at"])) < _GROQ_PROBE_CACHE_TTL:
+    if (now - float(_groq_probe_cache["at"])) < _REMOTE_PROBE_CACHE_TTL:
         return bool(_groq_probe_cache["responsive"])
 
     result = is_responsive()
     _groq_probe_cache["at"] = now
     _groq_probe_cache["responsive"] = result
+    return result
+
+
+def _openrouter_responsive_cached() -> bool:
+    """Cached `is_responsive()` probe for OpenRouter — same 30 s TTL pattern."""
+    from .enrichment.openrouter_client import is_responsive
+
+    now = time.time()
+    if (now - float(_openrouter_probe_cache["at"])) < _REMOTE_PROBE_CACHE_TTL:
+        return bool(_openrouter_probe_cache["responsive"])
+
+    result = is_responsive()
+    _openrouter_probe_cache["at"] = now
+    _openrouter_probe_cache["responsive"] = result
     return result
 
 
@@ -1406,11 +1447,14 @@ def health():
 
     search_backend = get_search_backend()
     translation_backend = get_translation_backend()
+    extract_backend = get_extract_backend()
     groq_in_use = any_backend_uses_groq()
+    openrouter_in_use = any_backend_uses_openrouter()
     groq_configured = bool((os.environ.get("GROQ_API_KEY") or "").strip())
+    openrouter_configured = bool((os.environ.get("OPENROUTER_API_KEY") or "").strip())
 
-    # Only probe Groq when at least one backend actually uses it — otherwise
-    # don't make outbound calls the operator didn't ask for.
+    # Only probe each remote when at least one backend actually uses it —
+    # otherwise don't make outbound calls the operator didn't ask for.
     if groq_in_use and groq_configured:
         groq_responsive: bool | None = _groq_responsive_cached()
     elif groq_in_use:
@@ -1418,11 +1462,20 @@ def health():
     else:
         groq_responsive = None
 
+    if openrouter_in_use and openrouter_configured:
+        openrouter_responsive: bool | None = _openrouter_responsive_cached()
+    elif openrouter_in_use:
+        openrouter_responsive = False
+    else:
+        openrouter_responsive = None
+
     # Active search backend usable?
     if search_backend == "mistral":
         search_ok = _state.search_model_ok
-    else:
+    elif search_backend == "groq":
         search_ok = groq_configured and bool(groq_responsive)
+    else:  # openrouter
+        search_ok = openrouter_configured and bool(openrouter_responsive)
 
     all_ok = _state.db_ok and search_ok
     return {
@@ -1434,9 +1487,14 @@ def health():
                 "configured": groq_configured,
                 "responsive": groq_responsive,
             },
+            "openrouter": {
+                "configured": openrouter_configured,
+                "responsive": openrouter_responsive,
+            },
         },
         "backends": {
             "search": search_backend,
             "translation": translation_backend,
+            "extract": extract_backend,
         },
     }

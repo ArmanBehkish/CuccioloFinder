@@ -198,8 +198,10 @@ class TranslationService:
         - `TRANSLATION_BACKEND=groq`: single Groq call (Llama 3.3's 128k
           context handles any shelter description in one shot — no chunking,
           no API hop). On failure, optionally falls back to the chunked
-          Mistral path when `GROQ_FALLBACK_TO_MISTRAL=1` AND Mistral is
+          Mistral path when `REMOTE_FALLBACK_TO_MISTRAL=1` AND Mistral is
           loaded in the API container (i.e. `SEARCH_BACKEND=mistral`).
+        - `TRANSLATION_BACKEND=openrouter`: single OpenRouter call against
+          the same Llama 3.3 70B family — same prompt, same fallback rule.
         - `TRANSLATION_BACKEND=mistral` (default): split into ≤800 char
           chunks at sentence/newline boundaries, translate each via
           `POST /api/translate/description`, retry with backoff.
@@ -213,7 +215,9 @@ class TranslationService:
             get_translation_backend,
         )
 
-        if get_translation_backend() == "groq":
+        backend = get_translation_backend()
+
+        if backend == "groq":
             from cucciolofinder.enrichment.groq_client import (
                 GroqError,
                 groq_translate_description,
@@ -231,6 +235,26 @@ class TranslationService:
                     return ""
                 logger.warning(
                     f"Groq translation failed, falling back to Mistral chunked path: {exc}"
+                )
+                # fall through to the chunked Mistral path
+        elif backend == "openrouter":
+            from cucciolofinder.enrichment.openrouter_client import (
+                OpenRouterError,
+                openrouter_translate_description,
+            )
+            try:
+                return openrouter_translate_description(text.strip())
+            except OpenRouterError as exc:
+                fallback_eligible = (
+                    get_fallback_enabled() and get_search_backend() == "mistral"
+                )
+                if not fallback_eligible:
+                    logger.error(
+                        f"OpenRouter translation failed and Mistral fallback unavailable: {exc}"
+                    )
+                    return ""
+                logger.warning(
+                    f"OpenRouter translation failed, falling back to Mistral chunked path: {exc}"
                 )
                 # fall through to the chunked Mistral path
 

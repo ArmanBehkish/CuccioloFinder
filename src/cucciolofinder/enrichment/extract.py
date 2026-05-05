@@ -11,10 +11,10 @@ One LLM call per field per dog (user choice — isolates a bad response to
 a single column).
 
 Backend-agnostic: routes through `_extract_field`, which dispatches on
-`EXTRACT_BACKEND` (default `mistral`). Both `groq` (direct SDK call) and
-`mistral` (worker→API HTTP hop, llama-cpp on the other side) are wired.
-Add new providers by extending the dispatch table — the call sites do
-not change.
+`EXTRACT_BACKEND` (default `mistral`). `groq` (direct SDK), `openrouter`
+(direct SDK against an OpenAI-compatible endpoint), and `mistral`
+(worker→API HTTP hop, llama-cpp on the other side) are wired. Add new
+providers by extending the dispatch table — the call sites do not change.
 """
 
 from datetime import date
@@ -30,6 +30,11 @@ from .mistral_client import (
     MistralError,
     mistral_extract_field,
     mistral_extract_good_bad_with,
+)
+from .openrouter_client import (
+    OpenRouterError,
+    openrouter_extract_field,
+    openrouter_extract_good_bad_with,
 )
 
 # (column, value_type, allowed_values, field_description)
@@ -135,41 +140,39 @@ def _extract_field(
 ) -> str | list[str] | None:
     """Backend dispatcher for a single field extraction call.
 
-    On the Groq path, if Groq raises and `GROQ_FALLBACK_TO_MISTRAL=1`
-    (default), fall through to the Mistral HTTP path. The API endpoint
-    lazy-loads Mistral on first call, so this works even when both
-    backends are otherwise configured for Groq.
+    On a remote path (Groq or OpenRouter), if the call raises and
+    `REMOTE_FALLBACK_TO_MISTRAL=1` (default), fall through to the Mistral
+    HTTP path. The API endpoint lazy-loads Mistral on first call, so this
+    works even when both backends are otherwise configured for a remote.
     """
+    kwargs = dict(
+        field_name=field_name,
+        value_type=value_type,
+        allowed_values=allowed_values,
+        field_description=field_description,
+    )
     if backend == "groq":
         try:
-            return groq_extract_field(
-                description_en,
-                field_name=field_name,
-                value_type=value_type,
-                allowed_values=allowed_values,
-                field_description=field_description,
-            )
+            return groq_extract_field(description_en, **kwargs)
         except GroqError as exc:
             if get_fallback_enabled():
                 logger.warning(
                     f"Groq extraction for {field_name} failed, falling back to Mistral: {exc}"
                 )
-                return mistral_extract_field(
-                    description_en,
-                    field_name=field_name,
-                    value_type=value_type,
-                    allowed_values=allowed_values,
-                    field_description=field_description,
+                return mistral_extract_field(description_en, **kwargs)
+            raise
+    if backend == "openrouter":
+        try:
+            return openrouter_extract_field(description_en, **kwargs)
+        except OpenRouterError as exc:
+            if get_fallback_enabled():
+                logger.warning(
+                    f"OpenRouter extraction for {field_name} failed, falling back to Mistral: {exc}"
                 )
+                return mistral_extract_field(description_en, **kwargs)
             raise
     if backend == "mistral":
-        return mistral_extract_field(
-            description_en,
-            field_name=field_name,
-            value_type=value_type,
-            allowed_values=allowed_values,
-            field_description=field_description,
-        )
+        return mistral_extract_field(description_en, **kwargs)
     raise NotImplementedError(
         f"Extraction backend '{backend}' is not implemented. "
         f"Implement a client wrapper and add a branch in _extract_field."
@@ -182,7 +185,7 @@ def _extract_good_bad_with(
 ) -> tuple[list[str], list[str]]:
     """Combined good_with + bad_with dispatcher.
 
-    Mirrors `_extract_field`'s backend dispatch and Groq -> Mistral
+    Mirrors `_extract_field`'s backend dispatch and remote → Mistral
     fallback semantics, but for the joint extraction of both
     compatibility lists in one LLM call.
     """
@@ -193,6 +196,16 @@ def _extract_good_bad_with(
             if get_fallback_enabled():
                 logger.warning(
                     f"Groq good/bad_with failed, falling back to Mistral: {exc}"
+                )
+                return mistral_extract_good_bad_with(description_en)
+            raise
+    if backend == "openrouter":
+        try:
+            return openrouter_extract_good_bad_with(description_en)
+        except OpenRouterError as exc:
+            if get_fallback_enabled():
+                logger.warning(
+                    f"OpenRouter good/bad_with failed, falling back to Mistral: {exc}"
                 )
                 return mistral_extract_good_bad_with(description_en)
             raise
@@ -240,7 +253,7 @@ def enrich_from_desc(session: Session, limit: int | None = None) -> int:
                     field_description=field_desc,
                     backend=backend,
                 )
-            except (GroqError, MistralError, ExtractionUnavailable) as exc:
+            except (GroqError, OpenRouterError, MistralError, ExtractionUnavailable) as exc:
                 logger.warning(f"[{dog.name}] extract {column} failed: {exc}")
                 continue
 
@@ -259,7 +272,7 @@ def enrich_from_desc(session: Session, limit: int | None = None) -> int:
         if dog.good_with_from_desc is None or dog.bad_with_from_desc is None:
             try:
                 good, bad = _extract_good_bad_with(dog.description_en, backend)
-            except (GroqError, MistralError, ExtractionUnavailable) as exc:
+            except (GroqError, OpenRouterError, MistralError, ExtractionUnavailable) as exc:
                 logger.warning(f"[{dog.name}] good/bad_with extraction failed: {exc}")
                 good, bad = [], []
 

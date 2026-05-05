@@ -17,6 +17,11 @@ def _stub_good_bad(monkeypatch, good=(), bad=()):
     )
     monkeypatch.setattr(
         extract_module,
+        "openrouter_extract_good_bad_with",
+        lambda _desc: (list(good), list(bad)),
+    )
+    monkeypatch.setattr(
+        extract_module,
         "mistral_extract_good_bad_with",
         lambda _desc: (list(good), list(bad)),
     )
@@ -296,11 +301,109 @@ def test_extract_groq_falls_back_to_mistral_on_failure(
     assert dog.bad_with_from_desc == ["cats"]
 
 
+def test_extract_openrouter_backend_dispatches_to_openrouter_client(
+    monkeypatch, session, make_dog
+):
+    """When EXTRACT_BACKEND=openrouter, dispatch goes through OpenRouter client functions."""
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "openrouter")
+
+    calls: list[str] = []
+
+    def fake_or_field(description_en, *, field_name, **_):
+        calls.append(field_name)
+        return "female" if field_name == "gender" else None
+
+    def fake_or_good_bad(_desc):
+        calls.append("good_bad")
+        return ["people"], []
+
+    def fail_groq(*args, **kwargs):
+        raise AssertionError("groq_extract_field should not run on openrouter path")
+
+    def fail_groq_good_bad(*args, **kwargs):
+        raise AssertionError(
+            "groq_extract_good_bad_with should not run on openrouter path"
+        )
+
+    def fail_mistral(*args, **kwargs):
+        raise AssertionError("mistral_extract_field should not run on openrouter path")
+
+    def fail_mistral_good_bad(*args, **kwargs):
+        raise AssertionError(
+            "mistral_extract_good_bad_with should not run on openrouter path"
+        )
+
+    monkeypatch.setattr(extract_module, "openrouter_extract_field", fake_or_field)
+    monkeypatch.setattr(
+        extract_module, "openrouter_extract_good_bad_with", fake_or_good_bad
+    )
+    monkeypatch.setattr(extract_module, "groq_extract_field", fail_groq)
+    monkeypatch.setattr(extract_module, "groq_extract_good_bad_with", fail_groq_good_bad)
+    monkeypatch.setattr(extract_module, "mistral_extract_field", fail_mistral)
+    monkeypatch.setattr(
+        extract_module, "mistral_extract_good_bad_with", fail_mistral_good_bad
+    )
+
+    dog = make_dog(description_en="A female dog.")
+    enrich_from_desc(session)
+    session.refresh(dog)
+
+    assert dog.gender_from_desc == "female"
+    assert "gender" in calls and "size" in calls and "good_bad" in calls
+    assert dog.good_with_from_desc == ["people"]
+
+
+def test_extract_openrouter_falls_back_to_mistral_on_failure(
+    monkeypatch, session, make_dog
+):
+    """OpenRouter raising + fallback enabled → Mistral is tried."""
+    from cucciolofinder.enrichment.openrouter_client import OpenRouterError
+
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "openrouter")
+    monkeypatch.setattr(extract_module, "get_fallback_enabled", lambda: True)
+
+    def boom_or_field(*args, **kwargs):
+        raise OpenRouterError("simulated outage")
+
+    def boom_or_good_bad(*_args, **_kwargs):
+        raise OpenRouterError("simulated outage")
+
+    fallback_field_calls: list[str] = []
+    fallback_good_bad_calls: list[bool] = []
+
+    def fake_mistral_field(description_en, *, field_name, **_):
+        fallback_field_calls.append(field_name)
+        return "female" if field_name == "gender" else None
+
+    def fake_mistral_good_bad(_desc):
+        fallback_good_bad_calls.append(True)
+        return ["children"], ["cats"]
+
+    monkeypatch.setattr(extract_module, "openrouter_extract_field", boom_or_field)
+    monkeypatch.setattr(
+        extract_module, "openrouter_extract_good_bad_with", boom_or_good_bad
+    )
+    monkeypatch.setattr(extract_module, "mistral_extract_field", fake_mistral_field)
+    monkeypatch.setattr(
+        extract_module, "mistral_extract_good_bad_with", fake_mistral_good_bad
+    )
+
+    dog = make_dog(description_en="A female dog.")
+    enrich_from_desc(session)
+    session.refresh(dog)
+
+    assert dog.gender_from_desc == "female"
+    assert "gender" in fallback_field_calls
+    assert fallback_good_bad_calls == [True]
+    assert dog.good_with_from_desc == ["children"]
+    assert dog.bad_with_from_desc == ["cats"]
+
+
 def test_extract_unknown_backend_raises(monkeypatch, session, make_dog):
     """Unknown backend names surface NotImplementedError."""
     import pytest
 
-    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "openrouter")
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "anthropic")
     _stub_good_bad(monkeypatch)
     make_dog(description_en="anything")
 

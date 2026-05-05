@@ -3,9 +3,10 @@ from sqlalchemy.orm import Session
 
 from cucciolofinder.database import Dog
 
-from .backends import get_fallback_enabled, get_translation_backend
+from .backends import get_extract_backend, get_fallback_enabled
 from .groq_client import GroqError, groq_extract_field
 from .mistral_client import MistralError, mistral_extract_field
+from .openrouter_client import OpenRouterError, openrouter_extract_field
 from .translator import TranslationService
 
 # Fields that get translated (with _en counterparts)
@@ -43,11 +44,13 @@ _BREED_FIELD_DESCRIPTION = (
 def _translate_breed(raw_breed: str) -> str | None:
     """Translate a raw shelter `breed` value to a free-form English phrase.
 
-    Backend-agnostic: dispatches on `TRANSLATION_BACKEND` and falls back
-    to Mistral on Groq failure when `GROQ_FALLBACK_TO_MISTRAL=1` (default).
+    Backend-agnostic: dispatches on `EXTRACT_BACKEND` (breed translation
+    is mechanically a per-row LLM extract, not bulk translation, so it
+    rides with the other extract calls). Falls back to Mistral on remote
+    failure when `REMOTE_FALLBACK_TO_MISTRAL=1` (default).
     Returns None if the LLM has no signal or all backends fail.
     """
-    backend = get_translation_backend()
+    backend = get_extract_backend()
     kwargs = dict(
         field_name="breed",
         value_type="string",
@@ -62,9 +65,19 @@ def _translate_breed(raw_breed: str) -> str | None:
                 logger.warning(f"Groq breed translation failed, falling back to Mistral: {exc}")
                 return mistral_extract_field(raw_breed, **kwargs)
             raise
+    if backend == "openrouter":
+        try:
+            return openrouter_extract_field(raw_breed, **kwargs)
+        except OpenRouterError as exc:
+            if get_fallback_enabled():
+                logger.warning(
+                    f"OpenRouter breed translation failed, falling back to Mistral: {exc}"
+                )
+                return mistral_extract_field(raw_breed, **kwargs)
+            raise
     if backend == "mistral":
         return mistral_extract_field(raw_breed, **kwargs)
-    raise NotImplementedError(f"Translation backend '{backend}' not implemented for breed")
+    raise NotImplementedError(f"Extract backend '{backend}' not implemented for breed")
 
 # Medical fields: normalize any positive/negative value to yes/no
 MEDICAL_FIELDS = {"microchip", "sterilization", "vaccine", "deworming"}
@@ -130,7 +143,7 @@ def enrich_translations(session: Session, limit: int | None = None) -> int:
         if dog.breed and dog.breed_en is None:
             try:
                 translated_breed = _translate_breed(dog.breed)
-            except (GroqError, MistralError) as exc:
+            except (GroqError, OpenRouterError, MistralError) as exc:
                 logger.warning(f"[{dog.name}] breed translation failed: {exc}")
                 translated_breed = None
             if translated_breed:
