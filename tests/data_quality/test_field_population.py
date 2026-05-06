@@ -1,6 +1,6 @@
 import pytest
 from loguru import logger
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 
 from cucciolofinder.database import Dog
 
@@ -126,9 +126,16 @@ def test_field_value_available(it_field, en_field, field_counts, db_session):
 
     en_col = getattr(Dog, en_field)
     fd_col = getattr(Dog, f"{it_field}_from_desc")
+    # An empty-string / empty-list sentinel means "LLM tried, no signal" —
+    # treat as no usable value for data-quality purposes.
     count = (
         db_session.query(func.count(Dog.id))
-        .filter(or_(en_col.isnot(None), fd_col.isnot(None)))
+        .filter(
+            or_(
+                and_(en_col.isnot(None), en_col != ""),
+                and_(fd_col.isnot(None), fd_col != ""),
+            )
+        )
         .scalar()
     )
     assert count > 0, (

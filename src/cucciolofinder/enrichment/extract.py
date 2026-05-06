@@ -254,12 +254,19 @@ def enrich_from_desc(session: Session, limit: int | None = None) -> int:
                     backend=backend,
                 )
             except (GroqError, OpenRouterError, MistralError, ExtractionUnavailable) as exc:
+                # Transient failure: leave column NULL so next run retries.
                 logger.warning(f"[{dog.name}] extract {column} failed: {exc}")
                 continue
 
+            # Successful call. None == "no signal" — write the empty-string
+            # sentinel so the gate above (`is not None`) skips this column on
+            # subsequent runs and we don't pay the LLM call again. NULL is
+            # reserved for "never tried OR was just invalidated" (the
+            # DatabasePipeline clears columns to NULL when description
+            # changes, which correctly retriggers extraction).
             if value is None:
-                continue
-            if value_type == "list" and not value:
+                setattr(dog, column, "")
+                wrote_any = True
                 continue
 
             setattr(dog, column, value)
@@ -270,20 +277,25 @@ def enrich_from_desc(session: Session, limit: int | None = None) -> int:
         # exclusive). Skip if both columns are already populated; if only
         # one is None, still call so the dog gets symmetric coverage.
         if dog.good_with_from_desc is None or dog.bad_with_from_desc is None:
+            call_failed = False
             try:
                 good, bad = _extract_good_bad_with(dog.description_en, backend)
             except (GroqError, OpenRouterError, MistralError, ExtractionUnavailable) as exc:
+                # Transient failure: leave both columns NULL for retry.
                 logger.warning(f"[{dog.name}] good/bad_with extraction failed: {exc}")
-                good, bad = [], []
+                call_failed = True
 
-            if dog.good_with_from_desc is None and good:
-                dog.good_with_from_desc = good
-                wrote_any = True
-                logger.info(f"[{dog.name}] good_with_from_desc = {good!r}")
-            if dog.bad_with_from_desc is None and bad:
-                dog.bad_with_from_desc = bad
-                wrote_any = True
-                logger.info(f"[{dog.name}] bad_with_from_desc = {bad!r}")
+            if not call_failed:
+                # Empty list `[]` is the success-with-no-signal sentinel,
+                # symmetric to `""` for scalars.
+                if dog.good_with_from_desc is None:
+                    dog.good_with_from_desc = good
+                    wrote_any = True
+                    logger.info(f"[{dog.name}] good_with_from_desc = {good!r}")
+                if dog.bad_with_from_desc is None:
+                    dog.bad_with_from_desc = bad
+                    wrote_any = True
+                    logger.info(f"[{dog.name}] bad_with_from_desc = {bad!r}")
 
         if wrote_any:
             processed += 1

@@ -346,6 +346,106 @@ def test_field_change_other_than_description_keeps_from_desc(
         assert methods == {"image", "text_embedding"}
 
 
+# ---- sentinel invalidation (Option A: from_desc/breed_en sentinels) ----
+
+def test_description_change_clears_sentinel_from_desc_columns(
+    patch_pipeline_db, session_factory, spider
+):
+    """`*_from_desc` columns holding the empty-string / empty-list sentinels
+    (from a previous successful-but-no-signal LLM call) must clear back to
+    NULL on description change so the next enrichment run retries them."""
+    identity = IdentityPipeline()
+    database = DatabasePipeline()
+    identity.open_spider(spider)
+    database.open_spider(spider)
+
+    item = {
+        "source_url": "https://x.com/dogs/sentinel",
+        "name": "Sentinel",
+        "description": "Old description",
+        "image_urls": ["s1.jpg"],
+        "images": [],
+    }
+    _run_pipelines(item, spider, identity, database)
+
+    list_cols = {"good_with_from_desc", "bad_with_from_desc"}
+    with session_factory() as s:
+        dog = (
+            s.query(Dog)
+            .filter_by(source_url="https://x.com/dogs/sentinel", superseded_at=None)
+            .first()
+        )
+        # Seed with sentinels (what a real Stage-2 no-signal pass would write).
+        for col in FROM_DESC_COLUMNS:
+            setattr(dog, col, [] if col in list_cols else "")
+        s.commit()
+
+    item2 = dict(item)
+    item2["description"] = "Updated description"
+    item2["image_urls"] = list(item["image_urls"])
+    _run_pipelines(item2, spider, identity, database)
+
+    with session_factory() as s:
+        dog = (
+            s.query(Dog)
+            .filter_by(source_url="https://x.com/dogs/sentinel", superseded_at=None)
+            .first()
+        )
+        for col in FROM_DESC_COLUMNS:
+            assert getattr(dog, col) is None, (
+                f"sentinel {col} must clear to NULL after description change "
+                f"so next run retries; got {getattr(dog, col)!r}"
+            )
+
+
+def test_breed_change_clears_sentinel_breed_en(
+    patch_pipeline_db, session_factory, spider
+):
+    """`breed_en` holding the empty-string sentinel must clear to NULL
+    when the raw `breed` field changes — same pattern as `*_from_desc`."""
+    identity = IdentityPipeline()
+    database = DatabasePipeline()
+    identity.open_spider(spider)
+    database.open_spider(spider)
+
+    item = {
+        "source_url": "https://x.com/dogs/sentinel-breed",
+        "name": "Pal",
+        "description": "Same desc",
+        "breed": "fluffy",
+        "image_urls": ["p1.jpg"],
+        "images": [],
+    }
+    _run_pipelines(item, spider, identity, database)
+
+    with session_factory() as s:
+        dog = (
+            s.query(Dog)
+            .filter_by(source_url="https://x.com/dogs/sentinel-breed", superseded_at=None)
+            .first()
+        )
+        # Seed sentinel — what a non-breed phrase ("fluffy") would land
+        # in breed_en after a Stage-1 successful-but-no-signal call.
+        dog.breed_en = ""
+        s.commit()
+
+    item2 = dict(item)
+    item2["breed"] = "Labrador"  # actual breed name now
+    item2["image_urls"] = list(item["image_urls"])
+    _run_pipelines(item2, spider, identity, database)
+
+    with session_factory() as s:
+        dog = (
+            s.query(Dog)
+            .filter_by(source_url="https://x.com/dogs/sentinel-breed", superseded_at=None)
+            .first()
+        )
+        assert dog.breed == "Labrador"
+        assert dog.breed_en is None, (
+            "sentinel breed_en must clear to NULL when raw breed changes"
+        )
+
+
 # ---- multiple-generation chain (URL recycled twice) ----
 
 def test_multiple_generations_chain(patch_pipeline_db, session_factory, spider):

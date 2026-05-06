@@ -140,15 +140,19 @@ def enrich_translations(session: Session, limit: int | None = None) -> int:
                     updated = True
 
         # Breed: liberal LLM translation (no FK to AKC catalogue).
+        # On a successful call returning None (raw breed isn't a real
+        # breed term — "fluffy", "ball of joy", etc.), write the empty
+        # string sentinel so we don't re-call the LLM every nightly run.
+        # Exceptions still leave breed_en NULL for retry. The
+        # DatabasePipeline clears breed_en to NULL when `breed` changes,
+        # so a real breed-field edit re-triggers translation.
         if dog.breed and dog.breed_en is None:
             try:
                 translated_breed = _translate_breed(dog.breed)
+                dog.breed_en = translated_breed if translated_breed else ""
+                updated = True
             except (GroqError, OpenRouterError, MistralError) as exc:
                 logger.warning(f"[{dog.name}] breed translation failed: {exc}")
-                translated_breed = None
-            if translated_breed:
-                dog.breed_en = translated_breed
-                updated = True
 
         # Complex fields: use translation model
         for field in COMPLEX_FIELDS:

@@ -280,7 +280,7 @@ def _reload_caches() -> int:
         # prompt so the model recognizes common breeds without restricting output.
         top_breed_rows = session.execute(
             select(Dog.breed_en, func.count(Dog.id))
-            .where(Dog.breed_en.isnot(None), Dog.superseded_at.is_(None))
+            .where(Dog.breed_en.isnot(None), Dog.breed_en != "", Dog.superseded_at.is_(None))
             .group_by(Dog.breed_en)
             .order_by(func.count(Dog.id).desc())
             .limit(20)

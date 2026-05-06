@@ -141,8 +141,13 @@ def test_extract_independent_of_en_columns(monkeypatch, session, make_dog):
     assert dog.gender_from_desc == "female"
 
 
-def test_extract_null_response_leaves_column_null(monkeypatch, session, make_dog):
-    """When the LLM returns None, the column stays NULL (no sentinel)."""
+def test_extract_null_response_writes_string_sentinel(monkeypatch, session, make_dog):
+    """When the LLM returns None, the column gets the empty-string sentinel.
+
+    NULL is reserved for "never tried OR was just invalidated"; a successful
+    LLM call that came back with no signal must mark the column as attempted
+    so the next nightly run doesn't re-call the LLM.
+    """
     monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
     monkeypatch.setattr(
         extract_module, "groq_extract_field", lambda *_, **__: None
@@ -152,15 +157,18 @@ def test_extract_null_response_leaves_column_null(monkeypatch, session, make_dog
     dog = make_dog(description_en="Some text without any signal.")
     n = enrich_from_desc(session)
 
-    assert n == 0
+    assert n == 1, "writing sentinels counts as 'touched' for the per-dog counter"
     session.refresh(dog)
-    assert dog.gender_from_desc is None
-    assert dog.size_from_desc is None
-    assert dog.breed_from_desc is None
+    assert dog.gender_from_desc == ""
+    assert dog.size_from_desc == ""
+    assert dog.breed_from_desc == ""
+    assert dog.weight_from_desc == ""
+    assert dog.fur_from_desc == ""
+    assert dog.microchip_from_desc == ""
 
 
-def test_extract_empty_list_leaves_column_null(monkeypatch, session, make_dog):
-    """Empty `good_with`/`bad_with` from the combined call leaves columns NULL."""
+def test_extract_empty_list_writes_list_sentinel(monkeypatch, session, make_dog):
+    """Empty `good_with`/`bad_with` from the combined call writes the [] sentinel."""
     monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
     monkeypatch.setattr(
         extract_module, "groq_extract_field", lambda *_, **__: None
@@ -171,6 +179,97 @@ def test_extract_empty_list_leaves_column_null(monkeypatch, session, make_dog):
     enrich_from_desc(session)
 
     session.refresh(dog)
+    assert dog.good_with_from_desc == []
+    assert dog.bad_with_from_desc == []
+
+
+def test_extract_sentinel_blocks_re_extraction(monkeypatch, session, make_dog):
+    """Second pass over a dog whose columns are sentinel-marked makes 0 LLM calls."""
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
+
+    field_calls: list[str] = []
+    good_bad_calls: list[bool] = []
+
+    def fake_field(_desc, *, field_name, **_):
+        field_calls.append(field_name)
+        return None  # always "no signal"
+
+    def fake_good_bad(_desc):
+        good_bad_calls.append(True)
+        return [], []
+
+    monkeypatch.setattr(extract_module, "groq_extract_field", fake_field)
+    monkeypatch.setattr(extract_module, "groq_extract_good_bad_with", fake_good_bad)
+
+    dog = make_dog(description_en="Description with no extractable signals.")
+
+    # First pass: should hit the LLM for every column + the joint call.
+    enrich_from_desc(session)
+    session.refresh(dog)
+    first_pass_field_count = len(field_calls)
+    first_pass_good_bad_count = len(good_bad_calls)
+    assert first_pass_field_count > 0
+    assert first_pass_good_bad_count == 1
+    # All columns now sentinel-marked.
+    assert dog.gender_from_desc == ""
+    assert dog.good_with_from_desc == []
+
+    # Second pass with the same dog state: nothing should fire.
+    field_calls.clear()
+    good_bad_calls.clear()
+    enrich_from_desc(session)
+
+    assert field_calls == [], (
+        f"sentinels should block re-extraction; instead saw: {field_calls}"
+    )
+    assert good_bad_calls == [], (
+        "joint good/bad_with call should be skipped when both columns hold sentinel []"
+    )
+
+
+def test_extract_exception_leaves_null_for_retry(monkeypatch, session, make_dog):
+    """Per-field LLM exception → column stays NULL (not sentinel) for next-run retry."""
+    from cucciolofinder.enrichment.groq_client import GroqError
+
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
+    monkeypatch.setattr(extract_module, "get_fallback_enabled", lambda: False)
+
+    def boom(*_args, **_kwargs):
+        raise GroqError("simulated transient failure")
+
+    monkeypatch.setattr(extract_module, "groq_extract_field", boom)
+    _stub_good_bad(monkeypatch)
+
+    dog = make_dog(description_en="Anything.")
+    enrich_from_desc(session)
+    session.refresh(dog)
+
+    # Per-field columns: NULL (so the next run retries). Sentinel would
+    # incorrectly mark them as attempted.
+    assert dog.gender_from_desc is None
+    assert dog.size_from_desc is None
+    assert dog.breed_from_desc is None
+
+
+def test_extract_combined_exception_leaves_null(monkeypatch, session, make_dog):
+    """Joint good/bad_with exception → both columns stay NULL for retry."""
+    from cucciolofinder.enrichment.groq_client import GroqError
+
+    monkeypatch.setattr(extract_module, "get_extract_backend", lambda: "groq")
+    monkeypatch.setattr(extract_module, "get_fallback_enabled", lambda: False)
+    monkeypatch.setattr(
+        extract_module, "groq_extract_field", lambda *_, **__: None
+    )
+
+    def boom(_desc):
+        raise GroqError("simulated transient failure")
+
+    monkeypatch.setattr(extract_module, "groq_extract_good_bad_with", boom)
+
+    dog = make_dog(description_en="Anything.")
+    enrich_from_desc(session)
+    session.refresh(dog)
+
     assert dog.good_with_from_desc is None
     assert dog.bad_with_from_desc is None
 
