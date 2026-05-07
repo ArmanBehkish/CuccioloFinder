@@ -18,7 +18,7 @@ from pathlib import Path
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from cucciolofinder.database import Breed, Dog
+from cucciolofinder.database import Breed, Dog, InferredDogBreed
 
 from .image_classifier import (
     DEFAULT_IMAGE_MODEL,
@@ -44,14 +44,36 @@ def run(session: Session) -> int:
         f"Image pipeline: {len(vit_to_akc)} ViT mappings, {len(valid_breeds)} valid breeds"
     )
 
+    dogs = session.query(Dog).filter(Dog.superseded_at.is_(None)).all()
+
+    # Skip dogs that already have an `image` row from the current model.
+    # `DatabasePipeline` deletes image-derived rows when the image set
+    # changes, so a surviving row implies same images. The model_name
+    # match handles model upgrades — bumping `IMAGE_MODEL_ID` in the
+    # environment forces a full rebuild without manual cache clearing.
+    already_classified = {
+        row[0]
+        for row in session.query(InferredDogBreed.dog_id)
+        .filter(
+            InferredDogBreed.method == "image",
+            InferredDogBreed.model_name == DEFAULT_IMAGE_MODEL,
+        )
+        .all()
+    }
+    dogs_to_classify = [d for d in dogs if d.id not in already_classified]
+    logger.info(
+        f"Image pipeline: {len(dogs)} active dogs, "
+        f"{len(dogs) - len(dogs_to_classify)} already classified (skipping), "
+        f"{len(dogs_to_classify)} to classify"
+    )
+    if not dogs_to_classify:
+        return 0
+
     logger.info("Loading image classifier...")
     processor, img_model, _ = load_image_classifier()
 
-    dogs = session.query(Dog).filter(Dog.superseded_at.is_(None)).all()
-    logger.info(f"Image pipeline: processing {len(dogs)} dogs")
-
     rows_written = 0
-    for dog in dogs:
+    for dog in dogs_to_classify:
         image_paths = [IMAGES_DIR / img.local_path for img in dog.images if img.local_path]
         if not image_paths:
             continue

@@ -23,13 +23,10 @@ FROM_DESC_COLUMNS = [
     "good_with_from_desc", "bad_with_from_desc",
 ]
 
-# Breed-inference methods that derive their result from the dog's
-# description text. When `description` changes, only rows with these
-# methods are invalidated in `inferred_dog_breeds`. Image-based methods
-# (`image`, `image_2nd`) depend on photos, not description, so they
-# survive description-only changes — re-running the image sub-pipeline
-# is the only way to refresh those.
-DESCRIPTION_DERIVED_BREED_METHODS = frozenset({"text_embedding", "text_llm"})
+# Methods invalidated when the image set changes. Membership only —
+# re-orderings without a new/dropped image don't change classifier output,
+# so we don't waste a re-run on them.
+IMAGE_DERIVED_BREED_METHODS = frozenset({"image", "image_2nd"})
 
 
 SPIDER_SOURCE_MAP = {
@@ -230,6 +227,10 @@ class DatabasePipeline:
                     )
                     raise DropItem("unchanged")
 
+                # Capture the image-set diff before the DogImage delete+re-add
+                # below mutates `existing.images`. Set-equality (not order).
+                images_changed = {img.url for img in existing.images} != set(image_urls)
+
                 description_changed = False
                 for key, value in dog_data.items():
                     old_value = getattr(existing, key)
@@ -246,22 +247,24 @@ class DatabasePipeline:
                 if description_changed:
                     for col in FROM_DESC_COLUMNS:
                         setattr(existing, col, None)
-                    deleted = (
+                    logger.debug(
+                        f"Description changed for dog '{existing.name}': cleared *_from_desc"
+                    )
+
+                if images_changed:
+                    deleted_img = (
                         session.query(InferredDogBreed)
                         .filter(
                             InferredDogBreed.dog_id == existing.id,
-                            InferredDogBreed.method.in_(
-                                DESCRIPTION_DERIVED_BREED_METHODS
-                            ),
+                            InferredDogBreed.method.in_(IMAGE_DERIVED_BREED_METHODS),
                         )
                         .delete(synchronize_session=False)
                     )
                     logger.debug(
-                        f"Description changed for dog '{existing.name}': "
-                        f"cleared *_from_desc and deleted {deleted} "
-                        "description-derived inferred_dog_breeds rows "
-                        "(image-based rows preserved)"
+                        f"Image set changed for dog '{existing.name}': "
+                        f"deleted {deleted_img} image-derived inferred_dog_breeds rows"
                     )
+
                 dog = existing
             else:
                 dog = Dog(
