@@ -85,3 +85,6 @@ logs/
 scripts/
 *.pem
 *.key
+
+# Local backup files (renamed during refactors, kept on disk for rollback)
+*.bak

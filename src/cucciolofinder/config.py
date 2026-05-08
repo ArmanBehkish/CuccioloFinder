@@ -20,7 +20,12 @@ SCRAPE_LIMIT_PER_SPIDER: int | None = None
 
 # Breed-inference sub-pipelines to run during enrichment.
 # Each entry corresponds to a `method` value written to inferred_dog_breeds.
-# Available: "image", "text_embedding", "categorical", "clustering".
-# Default: all implemented sub-pipelines. Stubs ("categorical", "clustering")
-# are accepted but no-op until implemented.
-BREED_DETECTION_PIPELINES: list[str] = ["image", "text_embedding"]
+# Available: "image", "cat_similarity".
+BREED_DETECTION_PIPELINES: list[str] = ["image", "cat_similarity"]
+
+# Minimum coverage (weighted fraction of present dimensions) before
+# cat_similarity will write a row for a dog. Coverage = Σ W[present] / Σ W[all],
+# weights are IG bits computed from the AKC reference. Below this threshold
+# the dog's signal is too sparse for the score to mean anything; the dog is
+# skipped. Default 0.25 ≈ "at least one high-IG dim, or a couple of mid-IG dims".
+CAT_SIMILARITY_MIN_COVERAGE: float = 0.25

@@ -7,7 +7,7 @@ stats, and search. They have zero heavy dependencies (no torch /
 transformers), so importing this module from the API container is safe.
 
 Breed-detection-specific helpers (zero-shot classifier, AKC reference
-mappers, profile-text builder) live in `enrichment/breed/profile_builder.py`.
+mappers) live in `enrichment/breed/profile_builder.py`.
 """
 
 import re

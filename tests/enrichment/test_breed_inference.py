@@ -1,6 +1,6 @@
 """Tests for Stage 3 (breed inference) dispatcher and upsert helper.
 
-The image / text-embedding sub-pipelines themselves load heavy models, so
+The image / cat_similarity sub-pipelines themselves load heavy models, so
 these tests stub them out and only exercise the orchestration layer:
 - dispatcher iterates the configured sub-pipelines
 - each writes its own rows to `inferred_dog_breeds`
@@ -44,7 +44,7 @@ def test_dispatcher_runs_only_configured_pipelines(monkeypatch, session, make_do
         "PIPELINES",
         {
             "image": make_runner("image", "Labrador Retriever", 0.9),
-            "text_embedding": make_runner("text_llm", "Poodle", 0.7),
+            "cat_similarity": make_runner("cat_similarity", "Poodle", 0.7),
         },
     )
     monkeypatch.setattr(
@@ -71,22 +71,22 @@ def test_dispatcher_writes_one_row_per_method_per_dog(monkeypatch, session, make
         )
         return 1
 
-    def text_runner(s):
+    def cat_runner(s):
         upsert_inferred_breed(
-            s, dog_id=dog.id, method="text_llm", value="Poodle",
-            model_name="minilm", confidence=0.73,
+            s, dog_id=dog.id, method="cat_similarity", value="Poodle",
+            model_name="cat-v1", confidence=0.73,
         )
         return 1
 
     monkeypatch.setattr(
         dispatcher_module,
         "PIPELINES",
-        {"image": image_runner, "text_embedding": text_runner},
+        {"image": image_runner, "cat_similarity": cat_runner},
     )
     monkeypatch.setattr(
         dispatcher_module,
         "BREED_DETECTION_PIPELINES",
-        ["image", "text_embedding"],
+        ["image", "cat_similarity"],
     )
 
     total = enrich_breed_detection(session)
@@ -94,10 +94,10 @@ def test_dispatcher_writes_one_row_per_method_per_dog(monkeypatch, session, make
 
     rows = session.query(InferredDogBreed).filter_by(dog_id=dog.id).all()
     by_method = {r.method: r for r in rows}
-    assert set(by_method) == {"image", "text_llm"}
+    assert set(by_method) == {"image", "cat_similarity"}
     assert by_method["image"].value == "Labrador Retriever"
     assert by_method["image"].confidence == 0.91
-    assert by_method["text_llm"].value == "Poodle"
+    assert by_method["cat_similarity"].value == "Poodle"
 
 
 def test_dispatcher_rerun_overwrites_same_method(monkeypatch, session, make_dog):
@@ -105,14 +105,14 @@ def test_dispatcher_rerun_overwrites_same_method(monkeypatch, session, make_dog)
     _seed_breeds(session, ["Labrador Retriever", "Poodle", "Beagle"])
     dog = make_dog(description_en="anything")
 
-    # Seed a text_llm row from a "previous run".
+    # Seed a cat_similarity row from a "previous run".
     upsert_inferred_breed(
-        session, dog_id=dog.id, method="text_llm", value="Beagle",
+        session, dog_id=dog.id, method="cat_similarity", value="Beagle",
         model_name="old-model", confidence=0.5,
     )
     session.commit()
 
-    # Now run image (writes new row) + text_embedding (overwrites text_llm row).
+    # Now run image (writes new row) + cat_similarity (overwrites the seed row).
     def image_runner(s):
         upsert_inferred_breed(
             s, dog_id=dog.id, method="image", value="Labrador Retriever",
@@ -120,32 +120,32 @@ def test_dispatcher_rerun_overwrites_same_method(monkeypatch, session, make_dog)
         )
         return 1
 
-    def text_runner(s):
+    def cat_runner(s):
         upsert_inferred_breed(
-            s, dog_id=dog.id, method="text_llm", value="Poodle",
-            model_name="minilm", confidence=0.8,
+            s, dog_id=dog.id, method="cat_similarity", value="Poodle",
+            model_name="cat-v1", confidence=0.8,
         )
         return 1
 
     monkeypatch.setattr(
         dispatcher_module,
         "PIPELINES",
-        {"image": image_runner, "text_embedding": text_runner},
+        {"image": image_runner, "cat_similarity": cat_runner},
     )
     monkeypatch.setattr(
         dispatcher_module,
         "BREED_DETECTION_PIPELINES",
-        ["image", "text_embedding"],
+        ["image", "cat_similarity"],
     )
 
     enrich_breed_detection(session)
 
     rows = session.query(InferredDogBreed).filter_by(dog_id=dog.id).all()
-    assert len(rows) == 2  # image + text_llm — no duplicates
+    assert len(rows) == 2  # image + cat_similarity — no duplicates
     by_method = {r.method: r for r in rows}
-    assert by_method["text_llm"].value == "Poodle"
-    assert by_method["text_llm"].model_name == "minilm"
-    assert by_method["text_llm"].confidence == 0.8
+    assert by_method["cat_similarity"].value == "Poodle"
+    assert by_method["cat_similarity"].model_name == "cat-v1"
+    assert by_method["cat_similarity"].confidence == 0.8
 
 
 def test_dispatcher_skips_unknown_pipeline_name(monkeypatch, session):

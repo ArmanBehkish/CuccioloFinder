@@ -196,16 +196,16 @@ def test_image_disjoint_supersedes_and_inserts_new_generation(
     assert new_row.description == "A different dog now"
 
 
-# ---- description change invalidates description-derived signals only ----
+# ---- description change clears *_from_desc, preserves inferred breeds ----
 
-def test_description_change_clears_from_desc_and_text_breeds_only(
+def test_description_change_clears_from_desc_only(
     patch_pipeline_db, session_factory, spider
 ):
-    """Description change → all `*_from_desc` cleared and description-
-    derived `inferred_dog_breeds` rows deleted (e.g. `text_embedding`).
-    Image-based rows (`image`, `image_2nd`) survive — they're derived
-    from photos, not text. Image set unchanged → same dog (no
-    supersession, same `dog_uid`)."""
+    """Description change → all `*_from_desc` cleared so Stage 2 re-extracts.
+    Inferred-breed rows are NOT touched here — each method has its own
+    invalidation rule keyed on its actual inputs (e.g. image set for
+    `image`/`image_2nd`). Image set unchanged → same dog (no supersession,
+    same `dog_uid`)."""
     identity = IdentityPipeline()
     database = DatabasePipeline()
     identity.open_spider(spider)
@@ -220,11 +220,9 @@ def test_description_change_clears_from_desc_and_text_breeds_only(
     }
     _run_pipelines(item, spider, identity, database)
 
-    # Seed: every `*_from_desc` populated, plus one image row + one
-    # text_embedding row in inferred_dog_breeds.
+    # Seed: every `*_from_desc` populated, plus an image inferred row.
     with session_factory() as s:
         s.add(Breed(name="Labrador Retriever"))
-        s.add(Breed(name="Poodle"))
         s.flush()
         dog = (
             s.query(Dog)
@@ -237,10 +235,6 @@ def test_description_change_clears_from_desc_and_text_breeds_only(
         s.add(InferredDogBreed(
             dog_id=dog.id, method="image", value="Labrador Retriever",
             model_name="vit", confidence=0.9,
-        ))
-        s.add(InferredDogBreed(
-            dog_id=dog.id, method="text_embedding", value="Poodle",
-            model_name="minilm", confidence=0.6,
         ))
         s.commit()
         seeded_id = dog.id
@@ -274,11 +268,11 @@ def test_description_change_clears_from_desc_and_text_breeds_only(
                 f"got {getattr(dog, col)!r}"
             )
 
-        # Only description-derived inferred rows deleted; image row preserved.
+        # Inferred breed rows are NOT deleted by description change.
         rows = s.query(InferredDogBreed).filter_by(dog_id=dog.id).all()
         methods = {r.method for r in rows}
         assert methods == {"image"}, (
-            f"image-derived inferred breeds must survive description change, "
+            f"description change must not delete inferred breed rows, "
             f"got methods={methods}"
         )
 
@@ -286,8 +280,10 @@ def test_description_change_clears_from_desc_and_text_breeds_only(
 def test_field_change_other_than_description_keeps_from_desc(
     patch_pipeline_db, session_factory, spider
 ):
-    """Non-description field change must NOT clear `*_from_desc` or
-    delete inferred breeds — that invalidation is description-specific."""
+    """Non-description field change preserves `*_from_desc` (description
+    unchanged → no Stage 2 re-run) and image inferred rows (image set
+    unchanged), but does delete cat_similarity rows since cat_similarity
+    reads many fields and any change could shift the score."""
     identity = IdentityPipeline()
     database = DatabasePipeline()
     identity.open_spider(spider)
@@ -318,8 +314,8 @@ def test_field_change_other_than_description_keeps_from_desc(
             model_name="vit", confidence=0.8,
         ))
         s.add(InferredDogBreed(
-            dog_id=dog.id, method="text_embedding", value="Beagle",
-            model_name="minilm", confidence=0.7,
+            dog_id=dog.id, method="cat_similarity", value="Beagle",
+            model_name="cat-v1", confidence=0.7,
         ))
         s.commit()
 
@@ -338,12 +334,13 @@ def test_field_change_other_than_description_keeps_from_desc(
         # `*_from_desc` preserved (description unchanged).
         assert dog.gender_from_desc == "male"
         assert dog.size_from_desc == "medium"
-        # All inferred rows preserved.
+        # Image rows preserved (images unchanged); cat_similarity deleted
+        # because any dog-field change invalidates it.
         methods = {
             r.method
             for r in s.query(InferredDogBreed).filter_by(dog_id=dog.id).all()
         }
-        assert methods == {"image", "text_embedding"}
+        assert methods == {"image"}
 
 
 # ---- sentinel invalidation (Option A: from_desc/breed_en sentinels) ----

@@ -25,6 +25,12 @@ from sqlalchemy.orm import Session
 from cucciolofinder.database import Dog
 
 from .backends import get_extract_backend, get_fallback_enabled
+from .breed.profile_builder import (
+    DEMEANOR_LABELS,
+    ENERGY_LABELS,
+    TEMPERAMENT_META,
+    TRAINABILITY_LABELS,
+)
 from .groq_client import GroqError, groq_extract_field, groq_extract_good_bad_with
 from .mistral_client import (
     MistralError,
@@ -302,4 +308,125 @@ def enrich_from_desc(session: Session, limit: int | None = None) -> int:
 
     session.commit()
     logger.info(f"Description extraction complete. Processed {processed} dogs.")
+    return processed
+
+
+# ---------------------------------------------------------------------------
+# Behavior extraction for cat_similarity
+# ---------------------------------------------------------------------------
+#
+# Four dimensions (energy_level, trainability, demeanor, temperament) used
+# as inputs to the categorical-similarity breed inference. One LLM call per
+# dimension per dog — kept separate (not combined) so each prompt can be
+# tuned independently as we observe results. Input to every call is the
+# description plus the shelter's structured compatibility lists (good_with_en,
+# bad_with_en); description-derived `*_from_desc` lists are NOT included
+# (they're already extracted FROM the description, would be redundant).
+
+# (column, value_type, allowed_values, field_description)
+_BEHAVIOR_FIELDS: list[tuple[str, str, list[str], str]] = [
+    (
+        "energy_level_from_desc", "enum", ENERGY_LABELS,
+        "the dog's overall activity / energy level. Read both explicit "
+        "statements ('high-energy', 'lazy') and indirect cues "
+        "(needs long walks; loves to run; prefers lounging).",
+    ),
+    (
+        "trainability_from_desc", "enum", TRAINABILITY_LABELS,
+        "the dog's trainability disposition. Read explicit cues ('easy "
+        "to train', 'stubborn') and behavioral hints (already knows "
+        "commands; eager to learn; ignores instructions).",
+    ),
+    (
+        "demeanor_from_desc", "enum", DEMEANOR_LABELS,
+        "the dog's social demeanor toward people. Read tone and "
+        "behavioral cues — friendly with everyone, watchful and alert, "
+        "slow to warm up to strangers, etc.",
+    ),
+    (
+        "temperament_from_desc", "list", TEMPERAMENT_META,
+        "the dog's temperament traits. Pick 1 to 3 most fitting tags "
+        "from the allowed list (verbatim), or empty list if no clear "
+        "signal. Read tone and described behaviors.",
+    ),
+]
+
+
+def _build_behavior_input(
+    description_en: str,
+    good_with_en: list[str] | None,
+    bad_with_en: list[str] | None,
+) -> str:
+    """Combine description + structured compatibility info into one text."""
+    parts = [f"Description:\n{description_en.strip()}"]
+    if good_with_en:
+        parts.append(f"Lives well with: {', '.join(good_with_en)}")
+    if bad_with_en:
+        parts.append(f"Does not live well with: {', '.join(bad_with_en)}")
+    return "\n\n".join(parts)
+
+
+def enrich_behavior_from_desc(session: Session, limit: int | None = None) -> int:
+    """Populate the four behavior `*_from_desc` columns via per-dimension LLM calls.
+
+    Returns the number of dogs that received at least one extracted field.
+    Same NULL-gate semantics as `enrich_from_desc`: skips columns that
+    already have a value (including the "" / [] sentinels).
+    """
+    backend = get_extract_backend()
+    logger.info(f"Behavior extraction backend: {backend}")
+
+    query = (
+        session.query(Dog)
+        .filter(Dog.superseded_at.is_(None))
+        .filter(Dog.description_en.isnot(None))
+        .filter(Dog.description_en != "")
+    )
+    if limit:
+        query = query.limit(limit)
+    dogs = query.all()
+    logger.info(f"Behavior extraction: {len(dogs)} candidate dogs")
+
+    processed = 0
+    for dog in dogs:
+        wrote_any = False
+        combined_input: str | None = None
+
+        for column, value_type, allowed, field_desc in _BEHAVIOR_FIELDS:
+            if getattr(dog, column, None) is not None:
+                continue
+
+            if combined_input is None:
+                combined_input = _build_behavior_input(
+                    dog.description_en, dog.good_with_en, dog.bad_with_en
+                )
+
+            try:
+                value = _extract_field(
+                    combined_input,
+                    field_name=column.removesuffix("_from_desc"),
+                    value_type=value_type,
+                    allowed_values=allowed,
+                    field_description=field_desc,
+                    backend=backend,
+                )
+            except (GroqError, OpenRouterError, MistralError, ExtractionUnavailable) as exc:
+                logger.warning(f"[{dog.name}] behavior extract {column} failed: {exc}")
+                continue
+
+            if value is None:
+                # Sentinel: [] for the temperament list, "" for the three scalars.
+                setattr(dog, column, [] if value_type == "list" else "")
+                wrote_any = True
+                continue
+
+            setattr(dog, column, value)
+            wrote_any = True
+            logger.info(f"[{dog.name}] {column} = {value!r}")
+
+        if wrote_any:
+            processed += 1
+
+    session.commit()
+    logger.info(f"Behavior extraction complete. Processed {processed} dogs.")
     return processed

@@ -6,6 +6,7 @@ load_dotenv()
 
 from cucciolofinder.database import get_engine, get_session, init_db
 from cucciolofinder.enrichment import (
+    enrich_behavior_from_desc,
     enrich_breed_detection,
     enrich_from_desc,
     enrich_translations,
@@ -107,6 +108,11 @@ if __name__ == "__main__":
     logger.info("Starting description-extraction enrichment...")
     with Session() as session:
         enrich_from_desc(session)
+
+    # Step 3b: Behavior dimensions for cat_similarity (Stage 2 sibling)
+    logger.info("Starting behavior-dimension extraction...")
+    with Session() as session:
+        enrich_behavior_from_desc(session)
 
     # Step 4: Breed detection sub-pipelines (Stage 3 — writes to inferred_dog_breeds)
     logger.info("Starting breed detection...")

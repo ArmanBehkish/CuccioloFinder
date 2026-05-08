@@ -97,6 +97,15 @@ class Dog(Base):
     bad_with_en = Column(JSON)
     bad_with_from_desc = Column(JSON)   # list, LLM-extracted from description
 
+    # Behavior dimensions for cat_similarity. One LLM call per dimension
+    # per dog reads description_en + good_with_en + bad_with_en. Cleared
+    # on description change via FROM_DESC_COLUMNS. NULL = needs extraction;
+    # "" / [] = "" or empty list sentinel meaning "tried, no signal".
+    energy_level_from_desc = Column(String)
+    trainability_from_desc = Column(String)
+    demeanor_from_desc = Column(String)
+    temperament_from_desc = Column(JSON)  # list[str], subset of TEMPERAMENT_META
+
     scraped_at = Column(
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
@@ -143,7 +152,7 @@ class InferredDogBreed(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     dog_id = Column(Integer, ForeignKey("dogs.id", ondelete="CASCADE"), nullable=False)
-    method = Column(String, nullable=False)         # 'image' | 'text_llm' | 'clustering' | ...
+    method = Column(String, nullable=False)         # 'image' | 'image_2nd' | 'cat_similarity' | ...
     value = Column(String, ForeignKey("breeds.name"), nullable=False)
     model_name = Column(String, nullable=True)
     confidence = Column(Float, nullable=True)

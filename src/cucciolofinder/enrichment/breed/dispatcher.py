@@ -20,10 +20,10 @@ from sqlalchemy.orm import Session
 from cucciolofinder.config import BREED_DETECTION_PIPELINES
 from cucciolofinder.database import InferredDogBreed
 
-# Sub-pipeline runners are loaded lazily — `breed/image.py` and
-# `breed/text_embedding.py` pull in torch / transformers, which are
-# worker-only deps. Importing this module from the API container or from
-# test code that doesn't exercise inference must stay lightweight.
+# Sub-pipeline runners are loaded lazily — `breed/image.py` pulls in
+# torch / transformers, which are worker-only deps. Importing this
+# module from the API container or from test code that doesn't exercise
+# inference must stay lightweight.
 PIPELINES: dict[str, Callable[[Session], int]] = {}
 
 
@@ -37,15 +37,11 @@ def _load_default_pipelines() -> None:
     """
     if PIPELINES:
         return
-    from . import categorical as categorical_pipeline
-    from . import clustering as clustering_pipeline
+    from . import cat_similarity as cat_similarity_pipeline
     from . import image as image_pipeline
-    from . import text_embedding as text_embedding_pipeline
 
     PIPELINES["image"] = image_pipeline.run
-    PIPELINES["text_embedding"] = text_embedding_pipeline.run
-    PIPELINES["categorical"] = categorical_pipeline.run
-    PIPELINES["clustering"] = clustering_pipeline.run
+    PIPELINES["cat_similarity"] = cat_similarity_pipeline.run
 
 
 def upsert_inferred_breed(

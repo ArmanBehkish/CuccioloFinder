@@ -1,6 +1,5 @@
-"""Breed-specific profile helpers: AKC reference mappers, zero-shot
-behavior classification, and the profile-text template used by the
-text-embedding sub-pipeline.
+"""Breed-specific profile helpers: AKC reference mappers and zero-shot
+behavior classification used by the breed-inference sub-pipelines.
 
 Generic value normalizers (`normalize_size/fur/weight/age`,
 `parse_weight_kg`) live in `enrichment/normalizers.py` — they're used
@@ -350,35 +349,3 @@ def classify_behavior(
     return result
 
 
-def build_profile_text(
-    size: str | None,
-    fur: str | None,
-    weight: str | None,
-    energy_level: str | None,
-    trainability: str | None,
-    demeanor: str | None,
-    temperament: list[str] | None,
-) -> str:
-    """Format all normalized fields into the shared text template for embedding.
-
-    Example output:
-        "temperament: Friendly, Intelligent, Loyal. energy_level: Energetic.
-         trainability: Eager to Please. demeanor: Friendly. size: large.
-         weight: heavy. coat: short"
-    """
-    parts: list[str] = []
-    if temperament:
-        parts.append(f"temperament: {', '.join(temperament)}")
-    if energy_level:
-        parts.append(f"energy_level: {energy_level}")
-    if trainability:
-        parts.append(f"trainability: {trainability}")
-    if demeanor:
-        parts.append(f"demeanor: {demeanor}")
-    if size:
-        parts.append(f"size: {size}")
-    if weight:
-        parts.append(f"weight: {weight}")
-    if fur:
-        parts.append(f"coat: {fur}")
-    return ". ".join(parts)

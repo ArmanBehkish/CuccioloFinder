@@ -17,16 +17,34 @@ from cucciolofinder.database import (
 )
 
 FROM_DESC_COLUMNS = [
-    "gender_from_desc", "age_from_desc", "weight_from_desc", "size_from_desc",
-    "breed_from_desc", "fur_from_desc", "microchip_from_desc",
-    "sterilization_from_desc", "vaccine_from_desc", "deworming_from_desc",
-    "good_with_from_desc", "bad_with_from_desc",
+    "gender_from_desc",
+    "age_from_desc",
+    "weight_from_desc",
+    "size_from_desc",
+    "breed_from_desc",
+    "fur_from_desc",
+    "microchip_from_desc",
+    "sterilization_from_desc",
+    "vaccine_from_desc",
+    "deworming_from_desc",
+    "good_with_from_desc",
+    "bad_with_from_desc",
+    "energy_level_from_desc",
+    "trainability_from_desc",
+    "demeanor_from_desc",
+    "temperament_from_desc",
 ]
 
 # Methods invalidated when the image set changes. Membership only —
 # re-orderings without a new/dropped image don't change classifier output,
 # so we don't waste a re-run on them.
 IMAGE_DERIVED_BREED_METHODS = frozenset({"image", "image_2nd"})
+
+# Methods invalidated when ANY of the dog's scraped fields change.
+# cat_similarity reads many inputs (structural + *_from_desc + good/bad_with),
+# so any field edit could legitimately change the score; deleting the row
+# forces a recompute on the next enrichment run.
+DOG_DERIVED_BREED_METHODS = frozenset({"cat_similarity", "cat_similarity_2nd"})
 
 
 SPIDER_SOURCE_MAP = {
@@ -232,10 +250,12 @@ class DatabasePipeline:
                 images_changed = {img.url for img in existing.images} != set(image_urls)
 
                 description_changed = False
+                dog_changed = False
                 for key, value in dog_data.items():
                     old_value = getattr(existing, key)
                     setattr(existing, key, value)
                     if old_value != value:
+                        dog_changed = True
                         if key == "description":
                             description_changed = True
                         if key in TRANSLATABLE_FIELDS:
@@ -264,6 +284,21 @@ class DatabasePipeline:
                         f"Image set changed for dog '{existing.name}': "
                         f"deleted {deleted_img} image-derived inferred_dog_breeds rows"
                     )
+
+                if dog_changed:
+                    deleted_cat = (
+                        session.query(InferredDogBreed)
+                        .filter(
+                            InferredDogBreed.dog_id == existing.id,
+                            InferredDogBreed.method.in_(DOG_DERIVED_BREED_METHODS),
+                        )
+                        .delete(synchronize_session=False)
+                    )
+                    if deleted_cat:
+                        logger.debug(
+                            f"Dog field changed for '{existing.name}': "
+                            f"deleted {deleted_cat} dog-derived inferred_dog_breeds rows"
+                        )
 
                 dog = existing
             else:
