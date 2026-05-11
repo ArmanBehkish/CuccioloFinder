@@ -336,6 +336,27 @@ def _reload_caches() -> int:
             "max": max_ss,
         }
 
+        # Which shelters actually populate each date column. Used by the
+        # frontend to hide the date filters for shelters that never expose
+        # them. Auto-discovered from the data: any spider that starts
+        # emitting a date will show up here after the next cache refresh.
+        post_date_sources = session.execute(
+            select(distinct(Dog.source_site)).where(
+                Dog.post_date.isnot(None), Dog.superseded_at.is_(None)
+            )
+        ).scalars().all()
+        shelter_since_sources = session.execute(
+            select(distinct(Dog.source_site)).where(
+                Dog.shelter_since.isnot(None),
+                Dog.shelter_since != "",
+                Dog.superseded_at.is_(None),
+            )
+        ).scalars().all()
+        enums["date_support"] = {
+            "post_date": sorted(s for s in post_date_sources if s),
+            "shelter_since": sorted(s for s in shelter_since_sources if s),
+        }
+
         # populate enums cache
         _state.enums_cache = enums
 
