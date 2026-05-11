@@ -191,7 +191,7 @@ def _reload_caches() -> int:
     import json
     from sqlalchemy import distinct, func, select
 
-    from .database.models import Breed, Dog
+    from .database.models import Dog, InferredDogBreed
     from .enrichment.normalizers import normalize_age, normalize_weight
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
@@ -218,14 +218,42 @@ def _reload_caches() -> int:
         enums["source_site"] = distinct_non_null(Dog.source_site)
         enums["gender_en"] = distinct_non_null(Dog.gender_en)
         enums["size_en"] = distinct_non_null(Dog.size_en)
-        # Breed dropdown sources the canonical AKC catalogue (not distinct
-        # values from `dogs.breed_en`), so users can filter on any approved
-        # breed even when the dataset doesn't currently contain it.
-        enums["breed_en"] = [
-            b for (b,) in session.execute(
-                select(Breed.name).order_by(Breed.name)
-            ).all() if b
-        ]
+
+        # `breed_claimed` — union of distinct non-empty values from the
+        # two claim columns. `breed_en` is the shelter's structured breed
+        # translated; `breed_from_desc` is LLM-extracted from description.
+        # Sibling sources, not primary/fallback — dropdown shows every
+        # breed string the shelters have actually used.
+        claimed: set[str] = set()
+        for col in (Dog.breed_en, Dog.breed_from_desc):
+            for (val,) in session.execute(
+                select(col).where(
+                    col.isnot(None), col != "", Dog.superseded_at.is_(None)
+                ).distinct()
+            ).all():
+                if val and val.strip():
+                    claimed.add(val.strip())
+        enums["breed_claimed"] = sorted(claimed)
+
+        # `breed_detected` — distinct AKC names written to inferred_dog_breeds
+        # by any of the four detection methods, restricted to active dogs.
+        # Explicit method list so future inference methods don't bleed in
+        # without an opt-in.
+        enums["breed_detected"] = sorted({
+            val
+            for (val,) in session.execute(
+                select(InferredDogBreed.value)
+                .join(Dog, Dog.id == InferredDogBreed.dog_id)
+                .where(
+                    Dog.superseded_at.is_(None),
+                    InferredDogBreed.method.in_(
+                        ("image", "image_2nd", "cat_similarity", "cat_similarity_2nd")
+                    ),
+                )
+                .distinct()
+            ).all()
+            if val
+        })
         enums["age_en"] = distinct_non_null(Dog.age_en)
         enums["fur_en"] = distinct_non_null(Dog.fur_en)
         enums["microchip_en"] = distinct_non_null(Dog.microchip_en)
@@ -418,7 +446,12 @@ class FilterDogsParams(BaseModel):
     source_site: str | None = None
     gender: str | None = None
     size: str | None = None
+    # Claimed breed — matches Dog.breed_en OR Dog.breed_from_desc
+    # (case-insensitive substring). Independent of `breed_detected`.
     breed: str | None = None
+    # Detected breed — exact AKC name match across all four AI methods
+    # (image, image_2nd, cat_similarity, cat_similarity_2nd).
+    breed_detected: str | None = None
     age: str | None = None
     fur: str | None = None
     microchip: str | None = None
@@ -456,10 +489,10 @@ def _try_parse_date(value: str | None) -> date | None:
 @app.get("/api/filter-dogs")
 def filter_dogs(params: FilterDogsParams = Depends()):
     """Structured search with optional filters. All filters are AND'd."""
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
     from sqlalchemy.orm import selectinload
 
-    from .database.models import Dog
+    from .database.models import Dog, InferredDogBreed
     from .enrichment.normalizers import normalize_age, normalize_weight
 
     engine = _state.engine or get_engine(DEFAULT_DB_PATH)
@@ -479,7 +512,23 @@ def filter_dogs(params: FilterDogsParams = Depends()):
         if params.size:
             q = q.where(Dog.size_en == params.size)
         if params.breed:
-            q = q.where(Dog.breed_en.ilike(f"%{params.breed}%"))
+            # Claimed breed: shelter's structured translation OR the
+            # LLM-extracted value from the description — sibling sources.
+            pat = f"%{params.breed}%"
+            q = q.where(or_(Dog.breed_en.ilike(pat), Dog.breed_from_desc.ilike(pat)))
+        if params.breed_detected:
+            # Detected breed: any of the AI-inference methods matched
+            # this canonical AKC name. `exists()` avoids row duplication
+            # when multiple methods agree on the same breed.
+            q = q.where(
+                select(InferredDogBreed.id).where(
+                    InferredDogBreed.dog_id == Dog.id,
+                    InferredDogBreed.value == params.breed_detected,
+                    InferredDogBreed.method.in_(
+                        ("image", "image_2nd", "cat_similarity", "cat_similarity_2nd")
+                    ),
+                ).exists()
+            )
         if params.fur:
             q = q.where(Dog.fur_en == params.fur)
         if params.microchip:
@@ -534,6 +583,7 @@ def filter_dogs(params: FilterDogsParams = Depends()):
                 )
                 thumbnail = _image_url(first)
             top = _top_inferred_breed(dog)
+            inferred_breeds = _inferred_breeds_list(dog)
             dog_list.append({
                 "id": dog.id,
                 "name": dog.name,
@@ -546,7 +596,8 @@ def filter_dogs(params: FilterDogsParams = Depends()):
                 "size_from_desc": dog.size_from_desc,
                 "breed_en": dog.breed_en,
                 "breed_from_desc": dog.breed_from_desc,
-                "inferred_breed_top": top.model_dump() if top else None,
+                "inferred_breed_top": top.model_dump(),
+                "inferred_breeds": [b.model_dump() for b in inferred_breeds],
                 "fur_en": dog.fur_en,
                 "fur_from_desc": dog.fur_from_desc,
                 "weight": dog.weight,
@@ -574,6 +625,20 @@ class InferredBreedOut(BaseModel):
     value: str
     confidence: float | None
     model_name: str | None
+
+
+class InferredBreedTop(BaseModel):
+    """Top breed per method group — keyed explicitly so the frontend
+    doesn't have to compare incomparable confidence scales (image =
+    softmax probability, cat_similarity = coverage).
+
+    `image` is the `method='image'` row (top-1 from ViT, always higher
+    than `image_2nd`). `cat_similarity` is the `method='cat_similarity'`
+    row (top-1 from categorical scoring; same coverage as `_2nd` but the
+    primary). Either may be `null` when its pipeline produced no row.
+    """
+    image: InferredBreedOut | None
+    cat_similarity: InferredBreedOut | None
 
 
 class DogProfileOut(BaseModel):
@@ -937,10 +1002,12 @@ class DogSummaryOut(BaseModel):
     size_from_desc: str | None
     breed_en: str | None
     breed_from_desc: str | None
-    # Highest-confidence row from `inferred_dog_breeds` (or None). The full
-    # candidate list lives on /api/dogs/{id} — kept off the summary to
-    # keep list payloads small.
-    inferred_breed_top: InferredBreedOut | None
+    # Top breed per method group (image, cat_similarity) — kept separate
+    # because the two methods' confidence values aren't comparable.
+    inferred_breed_top: InferredBreedTop
+    # Full list of inferred breed rows (image, image_2nd, cat_similarity,
+    # cat_similarity_2nd). Up to 4 entries; may be empty.
+    inferred_breeds: list[InferredBreedOut]
     fur_en: str | None
     fur_from_desc: str | None
     weight: str | None
@@ -948,24 +1015,38 @@ class DogSummaryOut(BaseModel):
     thumbnail: str | None
 
 
-def _top_inferred_breed(dog) -> InferredBreedOut | None:
-    """Return the highest-confidence inferred breed row, or None.
-
-    Rows with `confidence is None` are sorted last so they only win if no
-    confidence-bearing row exists.
-    """
-    if not dog.inferred_breeds:
+def _to_inferred_breed_out(ib) -> InferredBreedOut | None:
+    if ib is None:
         return None
-    best = max(
-        dog.inferred_breeds,
-        key=lambda ib: (ib.confidence is not None, ib.confidence or 0.0),
-    )
     return InferredBreedOut(
-        method=best.method,
-        value=best.value,
-        confidence=best.confidence,
-        model_name=best.model_name,
+        method=ib.method,
+        value=ib.value,
+        confidence=ib.confidence,
+        model_name=ib.model_name,
     )
+
+
+def _top_inferred_breed(dog) -> InferredBreedTop:
+    """Return the top breed per method group (image, cat_similarity).
+
+    Each method's "top" is its non-`_2nd` row — by construction `image`'s
+    softmax probability is always higher than `image_2nd`'s, and
+    `cat_similarity` carries the same dog-level coverage as `_2nd` but
+    is the primary winner.
+    """
+    by_method = {ib.method: ib for ib in dog.inferred_breeds}
+    return InferredBreedTop(
+        image=_to_inferred_breed_out(by_method.get("image")),
+        cat_similarity=_to_inferred_breed_out(by_method.get("cat_similarity")),
+    )
+
+
+def _inferred_breeds_list(dog) -> list[InferredBreedOut]:
+    """Return all inferred breed rows for a dog as Pydantic objects."""
+    return [
+        _to_inferred_breed_out(ib)
+        for ib in dog.inferred_breeds
+    ]
 
 
 class SearchResponse(BaseModel):
@@ -1066,6 +1147,7 @@ def search_dogs(req: SearchRequest):
                 breed_en=dog.breed_en,
                 breed_from_desc=dog.breed_from_desc,
                 inferred_breed_top=_top_inferred_breed(dog),
+                inferred_breeds=_inferred_breeds_list(dog),
                 fur_en=dog.fur_en,
                 fur_from_desc=dog.fur_from_desc,
                 weight=dog.weight,
