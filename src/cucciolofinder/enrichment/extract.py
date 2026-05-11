@@ -150,6 +150,12 @@ def _extract_field(
     `REMOTE_FALLBACK_TO_MISTRAL=1` (default), fall through to the Mistral
     HTTP path. The API endpoint lazy-loads Mistral on first call, so this
     works even when both backends are otherwise configured for a remote.
+
+    `max_tokens`: enums and short strings finish in well under 200 tokens,
+    so a tight cap discourages the model from rambling. List fields like
+    temperament need more headroom for the JSON array PLUS the chatty
+    "show your work" prose remote Llama tends to emit before the final
+    clean object — bumped to 400 for those.
     """
     kwargs = dict(
         field_name=field_name,
@@ -157,9 +163,13 @@ def _extract_field(
         allowed_values=allowed_values,
         field_description=field_description,
     )
+    remote_max_tokens = 400 if value_type == "list" else 200
+
     if backend == "groq":
         try:
-            return groq_extract_field(description_en, **kwargs)
+            return groq_extract_field(
+                description_en, max_tokens=remote_max_tokens, **kwargs
+            )
         except GroqError as exc:
             if get_fallback_enabled():
                 logger.warning(
@@ -169,7 +179,9 @@ def _extract_field(
             raise
     if backend == "openrouter":
         try:
-            return openrouter_extract_field(description_en, **kwargs)
+            return openrouter_extract_field(
+                description_en, max_tokens=remote_max_tokens, **kwargs
+            )
         except OpenRouterError as exc:
             if get_fallback_enabled():
                 logger.warning(

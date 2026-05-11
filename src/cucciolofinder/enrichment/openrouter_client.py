@@ -44,6 +44,7 @@ from .groq_client import (
     _VALID_KEYS,
     _coerce_extracted_value,
     _coerce_string_list,
+    _parse_last_json_with_keys,
     _try_parse_extract_json,
 )
 
@@ -226,6 +227,7 @@ def openrouter_extract_field(
     value_type: str,
     allowed_values: list[str] | None = None,
     field_description: str = "",
+    max_tokens: int = 200,
 ) -> str | list[str] | None:
     """Extract one field from an English description via OpenRouter.
 
@@ -258,14 +260,10 @@ def openrouter_extract_field(
         messages,
         json_mode=True,
         temperature=0.0,
-        max_tokens=200,
+        max_tokens=max_tokens,
     ).strip()
 
-    parsed = _try_parse_extract_json(raw)
-    if parsed is None:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            parsed = _try_parse_extract_json(match.group())
+    parsed = _parse_last_json_with_keys(raw, ("value",))
     if parsed is None:
         logger.warning(
             f"OpenRouter extraction returned non-JSON for {field_name}: {raw!r}"
@@ -300,11 +298,7 @@ def openrouter_extract_good_bad_with(description_en: str) -> tuple[list[str], li
         max_tokens=300,
     ).strip()
 
-    parsed = _try_parse_extract_json(raw)
-    if parsed is None:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            parsed = _try_parse_extract_json(match.group())
+    parsed = _parse_last_json_with_keys(raw, ("good_with", "bad_with"))
     if parsed is None:
         logger.warning(f"OpenRouter returned non-JSON for good/bad_with: {raw!r}")
         return [], []

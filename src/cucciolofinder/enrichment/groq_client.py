@@ -228,13 +228,23 @@ def _try_parse_json(text: str) -> dict | None:
 _EXTRACT_FIELD_RULES = (
     "You extract a single field from an English dog adoption listing description.\n"
     "\n"
-    "Rules:\n"
-    "- Output JSON only: {\"value\": <value>}.\n"
+    "OUTPUT FORMAT — strictly enforced:\n"
+    "- Output exactly ONE JSON object: {\"value\": <value>}.\n"
+    "- Nothing before the opening brace. Nothing after the closing brace.\n"
+    "- Do NOT include reasoning, commentary, explanation, or a 'corrected' "
+    "follow-up attempt anywhere in the response.\n"
+    "- Do NOT write prose INSIDE the JSON value (no \"X is not in the allowed "
+    "list\", no \"best match would be\", no \"however\", no \"->\", no \"replacing\").\n"
+    "- If the answer is null, output exactly {\"value\": null} — do NOT "
+    "explain why.\n"
+    "\n"
+    "CONTENT:\n"
     "- If the description does NOT clearly mention the field, output {\"value\": null}.\n"
     "- Do NOT guess. Do NOT infer from indirect cues unless the description is "
     "explicit.\n"
-    "- For enum fields: output MUST be one of the allowed values verbatim. "
-    "If the meaning matches none of them, output null.\n"
+    "- For enum fields: output MUST be one of the allowed values verbatim, as a "
+    "single string (NOT wrapped in a list). If the meaning matches none of them, "
+    "output null.\n"
     "- For list fields: output a JSON array of allowed values; empty array if "
     "none mentioned.\n"
     "- For free-text fields: output a short concise string verbatim from the "
@@ -249,6 +259,7 @@ def groq_extract_field(
     value_type: str,
     allowed_values: list[str] | None = None,
     field_description: str = "",
+    max_tokens: int = 200,
 ) -> str | list[str] | None:
     """Extract one field from an English description via Groq.
 
@@ -286,14 +297,10 @@ def groq_extract_field(
         messages,
         json_mode=True,
         temperature=0.0,
-        max_tokens=200,
+        max_tokens=max_tokens,
     ).strip()
 
-    parsed = _try_parse_extract_json(raw)
-    if parsed is None:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            parsed = _try_parse_extract_json(match.group())
+    parsed = _parse_last_json_with_keys(raw, ("value",))
     if parsed is None:
         logger.warning(f"Groq extraction returned non-JSON for {field_name}: {raw!r}")
         return None
@@ -365,11 +372,7 @@ def groq_extract_good_bad_with(description_en: str) -> tuple[list[str], list[str
         max_tokens=300,
     ).strip()
 
-    parsed = _try_parse_extract_json(raw)
-    if parsed is None:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            parsed = _try_parse_extract_json(match.group())
+    parsed = _parse_last_json_with_keys(raw, ("good_with", "bad_with"))
     if parsed is None:
         logger.warning(f"Groq returned non-JSON for good/bad_with: {raw!r}")
         return [], []
@@ -401,6 +404,38 @@ def _try_parse_extract_json(text: str) -> dict | None:
     return obj
 
 
+def _parse_last_json_with_keys(
+    text: str, expected_keys: tuple[str, ...]
+) -> dict | None:
+    """Find the last balanced ``{...}`` substring that parses to a dict
+    containing at least one expected key.
+
+    Llama-class models in JSON mode often emit a chatty "show your work"
+    pass followed by a clean final JSON block — sometimes with the outer
+    braces never closed, only the inner one. Stack-based bracket matching
+    walks the response and records every balanced ``{...}`` it can find
+    (skipping unclosed outer braces); we return the last candidate that
+    has the expected key. Falls back to a whole-text parse for clean
+    single-block responses where no inner block was found.
+    """
+    candidates: list[dict] = []
+    stack: list[int] = []
+    for i, ch in enumerate(text):
+        if ch == "{":
+            stack.append(i)
+        elif ch == "}" and stack:
+            start = stack.pop()
+            parsed = _try_parse_extract_json(text[start : i + 1])
+            if parsed is not None and any(k in parsed for k in expected_keys):
+                candidates.append(parsed)
+    if candidates:
+        return candidates[-1]
+    parsed = _try_parse_extract_json(text)
+    if parsed is not None and any(k in parsed for k in expected_keys):
+        return parsed
+    return None
+
+
 def _coerce_extracted_value(
     field_name: str,
     value,
@@ -412,6 +447,12 @@ def _coerce_extracted_value(
         return None
 
     if value_type == "enum":
+        # Lenient: model sometimes wraps a single enum value in a list
+        # (["Friendly"] instead of "Friendly"). Unwrap the single element
+        # so we can validate it as a scalar. Multi-element lists for an
+        # enum are genuinely ambiguous → still rejected below.
+        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
+            value = value[0]
         if not isinstance(value, str):
             logger.warning(f"Extraction for {field_name}: expected str, got {type(value).__name__}")
             return None
