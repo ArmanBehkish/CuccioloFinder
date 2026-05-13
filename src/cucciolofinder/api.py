@@ -261,22 +261,25 @@ def _reload_caches() -> int:
         enums["vaccine_en"] = distinct_non_null(Dog.vaccine_en)
         enums["deworming_en"] = distinct_non_null(Dog.deworming_en)
 
-        # age_category: derived from age_en
+        # age_category: union of normalize_age(age_en or age_from_desc) across
+        # active dogs. Pulling both columns means categories that only show
+        # up via LLM extraction still appear in the dropdown.
         age_cats: set[str] = set()
-        for (age_en,) in session.execute(
-            select(Dog.age_en).where(Dog.age_en.isnot(None), Dog.superseded_at.is_(None))
+        for (age_en, age_fd) in session.execute(
+            select(Dog.age_en, Dog.age_from_desc).where(Dog.superseded_at.is_(None))
         ).all():
-            cat = normalize_age(age_en)
+            cat = normalize_age(age_en or age_fd)
             if cat:
                 age_cats.add(cat)
         enums["age_category"] = sorted(age_cats)
 
-        # weight categories: derived from weight column
+        # weight categories: same fallback rule as age_category. `weight` is
+        # the raw IT scrape; `weight_from_desc` is the LLM extraction.
         weight_cats: set[str] = set()
-        for (w,) in session.execute(
-            select(Dog.weight).where(Dog.weight.isnot(None), Dog.superseded_at.is_(None))
+        for (w, w_fd) in session.execute(
+            select(Dog.weight, Dog.weight_from_desc).where(Dog.superseded_at.is_(None))
         ).all():
-            cat = normalize_weight(w)
+            cat = normalize_weight(w or w_fd)
             if cat:
                 weight_cats.add(cat)
         enums["weight"] = sorted(weight_cats)
@@ -383,7 +386,11 @@ def _reload_caches() -> int:
                 "age": dog.age,
                 "age_en": dog.age_en,
                 "age_from_desc": dog.age_from_desc,
-                "age_category": normalize_age(dog.age_en),
+                # Derived from whichever source carries the value. `_en` wins
+                # when present (literal translation of the structured field);
+                # we fall back to `_from_desc` so dogs whose shelter doesn't
+                # expose age structurally still bucket into a category.
+                "age_category": normalize_age(dog.age_en or dog.age_from_desc),
                 "size": dog.size,
                 "size_en": dog.size_en,
                 "size_from_desc": dog.size_from_desc,
@@ -395,7 +402,8 @@ def _reload_caches() -> int:
                 "fur_from_desc": dog.fur_from_desc,
                 "weight": dog.weight,
                 "weight_from_desc": dog.weight_from_desc,
-                "weight_category": normalize_weight(dog.weight),
+                # Same fallback rule as age_category — see note above.
+                "weight_category": normalize_weight(dog.weight or dog.weight_from_desc),
                 "description": dog.description,
                 "description_en": dog.description_en,
                 "microchip": dog.microchip,
