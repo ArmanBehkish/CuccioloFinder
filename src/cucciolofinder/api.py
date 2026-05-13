@@ -531,10 +531,47 @@ def _try_parse_date(value: str | None) -> date | None:
         return None
 
 
+def _eq_resolved(col_en, col_fd, value):
+    """SQL clause matching `resolve(col_en, col_fd) == value`.
+
+    Mirrors the frontend's merge rule (prefer `_en` when truthy, fall back to
+    `_from_desc`). Used so filter endpoints agree with the stats page:
+
+      - If `_en` carries a value, that wins. The dog matches iff `col_en == value`.
+      - Only if `_en` is null/empty does `_from_desc` get consulted.
+
+    A naive `or_(col_en == v, col_fd == v)` would over-match on conflicts
+    (e.g. _en='medium', _from_desc='large' would appear in both buckets).
+    """
+    from sqlalchemy import and_, or_
+    return or_(
+        col_en == value,
+        and_(or_(col_en.is_(None), col_en == ''), col_fd == value),
+    )
+
+
+def _like_resolved(col_en, col_fd, pattern):
+    """LIKE variant of `_eq_resolved` for substring / JSON-array matching."""
+    from sqlalchemy import and_, or_
+    return or_(
+        col_en.like(pattern),
+        and_(or_(col_en.is_(None), col_en == '', col_en == '[]'), col_fd.like(pattern)),
+    )
+
+
+def _ilike_resolved(col_en, col_fd, pattern):
+    """Case-insensitive LIKE variant — used for the claimed-breed search."""
+    from sqlalchemy import and_, or_
+    return or_(
+        col_en.ilike(pattern),
+        and_(or_(col_en.is_(None), col_en == ''), col_fd.ilike(pattern)),
+    )
+
+
 @app.get("/api/filter-dogs")
 def filter_dogs(params: FilterDogsParams = Depends()):
     """Structured search with optional filters. All filters are AND'd."""
-    from sqlalchemy import or_, select
+    from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     from .database.models import Dog, InferredDogBreed
@@ -549,18 +586,20 @@ def filter_dogs(params: FilterDogsParams = Depends()):
             selectinload(Dog.inferred_breeds),
         ).where(Dog.superseded_at.is_(None))
 
-        # SQL-level filters
+        # SQL-level filters. Fields with a `_from_desc` sibling go through
+        # `_eq_resolved` so the merge rule (prefer `_en`, fall back to
+        # `_from_desc`) matches what the stats page does — otherwise the
+        # filter count and the stats count disagree for the same value.
         if params.source_site:
             q = q.where(Dog.source_site == params.source_site)
         if params.gender:
-            q = q.where(Dog.gender_en == params.gender)
+            q = q.where(_eq_resolved(Dog.gender_en, Dog.gender_from_desc, params.gender))
         if params.size:
-            q = q.where(Dog.size_en == params.size)
+            q = q.where(_eq_resolved(Dog.size_en, Dog.size_from_desc, params.size))
         if params.breed:
-            # Claimed breed: shelter's structured translation OR the
-            # LLM-extracted value from the description — sibling sources.
+            # Claimed breed: substring search routed through the merge rule.
             pat = f"%{params.breed}%"
-            q = q.where(or_(Dog.breed_en.ilike(pat), Dog.breed_from_desc.ilike(pat)))
+            q = q.where(_ilike_resolved(Dog.breed_en, Dog.breed_from_desc, pat))
         if params.breed_detected:
             # Detected breed: any of the AI-inference methods matched
             # this canonical AKC name. `exists()` avoids row duplication
@@ -575,19 +614,23 @@ def filter_dogs(params: FilterDogsParams = Depends()):
                 ).exists()
             )
         if params.fur:
-            q = q.where(Dog.fur_en == params.fur)
+            q = q.where(_eq_resolved(Dog.fur_en, Dog.fur_from_desc, params.fur))
         if params.microchip:
-            q = q.where(Dog.microchip_en == params.microchip)
+            q = q.where(_eq_resolved(Dog.microchip_en, Dog.microchip_from_desc, params.microchip))
         if params.sterilization:
-            q = q.where(Dog.sterilization_en == params.sterilization)
+            q = q.where(_eq_resolved(Dog.sterilization_en, Dog.sterilization_from_desc, params.sterilization))
         if params.vaccine:
-            q = q.where(Dog.vaccine_en == params.vaccine)
+            q = q.where(_eq_resolved(Dog.vaccine_en, Dog.vaccine_from_desc, params.vaccine))
         if params.deworming:
-            q = q.where(Dog.deworming_en == params.deworming)
+            q = q.where(_eq_resolved(Dog.deworming_en, Dog.deworming_from_desc, params.deworming))
         if params.good_with:
-            q = q.where(Dog.good_with_en.like(f'%"{params.good_with}"%'))
+            # JSON arrays stored as text — `'%"value"%'` finds the value
+            # whether it sits at the start, middle, or end of the list.
+            pat = f'%"{params.good_with}"%'
+            q = q.where(_like_resolved(Dog.good_with_en, Dog.good_with_from_desc, pat))
         if params.bad_with:
-            q = q.where(Dog.bad_with_en.like(f'%"{params.bad_with}"%'))
+            pat = f'%"{params.bad_with}"%'
+            q = q.where(_like_resolved(Dog.bad_with_en, Dog.bad_with_from_desc, pat))
         if params.post_date_from:
             q = q.where(Dog.post_date >= params.post_date_from)
         if params.post_date_to:
@@ -595,11 +638,13 @@ def filter_dogs(params: FilterDogsParams = Depends()):
 
         dogs = session.execute(q).scalars().all()
 
-        # Python post-filters (fields derived at runtime, not stored in DB)
+        # Python post-filters (derived from `normalize_*`, can't be pushed to SQL).
+        # Same merge rule as the SQL filters above: `_en`/raw wins, fall back
+        # to `_from_desc`. Matches the stats cache's derived categories.
         if params.age:
-            dogs = [d for d in dogs if normalize_age(d.age_en) == params.age]
+            dogs = [d for d in dogs if normalize_age(d.age_en or d.age_from_desc) == params.age]
         if params.weight:
-            dogs = [d for d in dogs if normalize_weight(d.weight) == params.weight]
+            dogs = [d for d in dogs if normalize_weight(d.weight or d.weight_from_desc) == params.weight]
         if params.shelter_since_from or params.shelter_since_to:
             filtered = []
             for d in dogs:
@@ -1139,34 +1184,35 @@ def search_dogs(req: SearchRequest):
             selectinload(Dog.inferred_breeds),
         ).where(Dog.superseded_at.is_(None))
 
-        # SQL-level filters from extracted fields
+        # SQL-level filters from extracted fields. Same merge rule as
+        # /api/filter-dogs — see `_eq_resolved` for the rationale.
         if gender := extracted.get("gender"):
-            q = q.where(Dog.gender_en == gender)
+            q = q.where(_eq_resolved(Dog.gender_en, Dog.gender_from_desc, gender))
         if size := extracted.get("size"):
-            q = q.where(Dog.size_en == size)
+            q = q.where(_eq_resolved(Dog.size_en, Dog.size_from_desc, size))
         if breed := extracted.get("breed"):
-            q = q.where(Dog.breed_en.ilike(f"%{breed}%"))
+            q = q.where(_ilike_resolved(Dog.breed_en, Dog.breed_from_desc, f"%{breed}%"))
         if fur := extracted.get("fur"):
-            q = q.where(Dog.fur_en == fur)
+            q = q.where(_eq_resolved(Dog.fur_en, Dog.fur_from_desc, fur))
         # good_with / bad_with may be lists or strings — AND condition for each value
         gw_val = extracted.get("good_with") or []
         if isinstance(gw_val, str):
             gw_val = [gw_val]
         for gw in gw_val:
-            q = q.where(Dog.good_with_en.like(f'%"{gw}"%'))
+            q = q.where(_like_resolved(Dog.good_with_en, Dog.good_with_from_desc, f'%"{gw}"%'))
         bw_val = extracted.get("bad_with") or []
         if isinstance(bw_val, str):
             bw_val = [bw_val]
         for bw in bw_val:
-            q = q.where(Dog.bad_with_en.like(f'%"{bw}"%'))
+            q = q.where(_like_resolved(Dog.bad_with_en, Dog.bad_with_from_desc, f'%"{bw}"%'))
 
         dogs = session.execute(q).scalars().all()
 
-        # post-filters
+        # post-filters — derived categories use the same fallback as the stats cache.
         if age := extracted.get("age"):
-            dogs = [d for d in dogs if normalize_age(d.age_en) == age]
+            dogs = [d for d in dogs if normalize_age(d.age_en or d.age_from_desc) == age]
         if weight := extracted.get("weight"):
-            dogs = [d for d in dogs if normalize_weight(d.weight) == weight]
+            dogs = [d for d in dogs if normalize_weight(d.weight or d.weight_from_desc) == weight]
 
         dogs = dogs[: req.limit]
 
