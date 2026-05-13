@@ -369,37 +369,53 @@ def _reload_caches() -> int:
 
         dog_list = []
         for dog in dogs_rows:
+            # `*_from_desc` columns are the LLM-extracted fallbacks from the
+            # description. They're emitted independently of `*_en` — the
+            # merge policy (which one wins, how to badge it) is a frontend
+            # display concern, not something the API decides.
             dog_list.append({
                 "id": dog.id,
                 "source_site": dog.source_site,
                 "name": dog.name,
                 "gender": dog.gender,
                 "gender_en": dog.gender_en,
+                "gender_from_desc": dog.gender_from_desc,
                 "age": dog.age,
                 "age_en": dog.age_en,
+                "age_from_desc": dog.age_from_desc,
                 "age_category": normalize_age(dog.age_en),
                 "size": dog.size,
                 "size_en": dog.size_en,
+                "size_from_desc": dog.size_from_desc,
                 "breed": dog.breed,
                 "breed_en": dog.breed_en,
+                "breed_from_desc": dog.breed_from_desc,
                 "fur": dog.fur,
                 "fur_en": dog.fur_en,
+                "fur_from_desc": dog.fur_from_desc,
                 "weight": dog.weight,
+                "weight_from_desc": dog.weight_from_desc,
                 "weight_category": normalize_weight(dog.weight),
                 "description": dog.description,
                 "description_en": dog.description_en,
                 "microchip": dog.microchip,
                 "microchip_en": dog.microchip_en,
+                "microchip_from_desc": dog.microchip_from_desc,
                 "sterilization": dog.sterilization,
                 "sterilization_en": dog.sterilization_en,
+                "sterilization_from_desc": dog.sterilization_from_desc,
                 "vaccine": dog.vaccine,
                 "vaccine_en": dog.vaccine_en,
+                "vaccine_from_desc": dog.vaccine_from_desc,
                 "deworming": dog.deworming,
                 "deworming_en": dog.deworming_en,
+                "deworming_from_desc": dog.deworming_from_desc,
                 "good_with": dog.good_with,
                 "good_with_en": dog.good_with_en,
+                "good_with_from_desc": dog.good_with_from_desc,
                 "bad_with": dog.bad_with,
                 "bad_with_en": dog.bad_with_en,
+                "bad_with_from_desc": dog.bad_with_from_desc,
                 "post_date": str(dog.post_date) if dog.post_date else None,
                 "shelter_since": dog.shelter_since,
             })
