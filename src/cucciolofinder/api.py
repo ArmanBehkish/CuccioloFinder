@@ -1255,22 +1255,6 @@ def search_dogs(req: SearchRequest):
     )
 
 
-#### POST /api/debug/prompt (TEMPORARY — remove after testing)
-
-class DebugPromptRequest(BaseModel):
-    prompt: str
-
-@app.post("/api/debug/prompt")
-def debug_prompt(req: DebugPromptRequest):
-    """Temporary: send a raw prompt to the search model and return the raw output."""
-    if not _state.search_model_ok:
-        raise HTTPException(status_code=503, detail="Search model not available")
-    llm = _state.search_model
-    output = llm(req.prompt, max_tokens=200, stop=["\n\n"], temperature=0.0)
-    raw = output["choices"][0]["text"].strip()
-    return {"raw_output": raw}
-
-
 #### POST /api/translate/description
 
 _TRANSLATION_PROMPT = """\
