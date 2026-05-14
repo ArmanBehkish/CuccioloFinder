@@ -1,0 +1,203 @@
+:root {
+  /* ===== Sandy amber palette (matches beach / golden-hour hero) =====
+   *
+   * PREVIOUS green + gold palette:
+   *   --sidebar-bg: #f0f4ed;  --sidebar-text: #2d3a2e;
+   *   --sidebar-accent: #4a7c59;  --sidebar-accent-text: #ffffff;
+   *   --sidebar-hover: #e3eade;  --sidebar-border: #d4ddd0;
+   *   --body-bg: #fafcf9;  --text-primary: #1e2b1f;
+   *   --text-muted: #6b7e6d;  --card-bg: #ffffff;
+   *   --card-border: #dce5d9;  --accent: #4a7c59;
+   *   --accent-hover: #3b6547;
+   */
+
+  /* Sidebar — warm sandy cream */
+  --sidebar-bg: #f3ede6;
+  --sidebar-text: #2a1f14;
+  --sidebar-accent: #b8864e;
+  --sidebar-accent-text: #ffffff;
+  --sidebar-hover: #e9e0d5;
+  --sidebar-border: #ddd3c6;
+
+  /* Main content — dark text for high contrast */
+  --body-bg: #faf7f2;
+  --text-primary: #1a1009;
+  --text-muted: #5c4a38;
+  --card-bg: #ffffff;
+  --card-border: #e5dbd0;
+  --accent: #b8864e;
+  --accent-hover: #9d7040;
+
+  --ui-scale: 1;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --ui-scale: 0.65;
+  }
+}
+
+@media (min-width: 1280px) {
+  :root {
+    --ui-scale: 0.8;
+  }
+}
+
+@media (min-width: 1440px) {
+  :root {
+    --ui-scale: 0.9;
+  }
+}
+
+@media (min-width: 1680px) {
+  :root {
+    --ui-scale: 0.98;
+  }
+}
+
+@media (min-width: 1920px) {
+  :root {
+    --ui-scale: 0.99;
+  }
+}
+
+@media (min-width: 2048px) {
+  :root { 
+      --ui-scale: 1.15; 
+  }
+}
+
+@media (min-width: 2200px) {
+  :root {
+    --ui-scale: 1.3;
+  }
+}
+
+@media (min-width: 2560px) {
+  :root {
+    --ui-scale: 1.45;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--body-bg);
+  color: var(--text-primary);
+  font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Fredoka', 'Nunito Sans', sans-serif;
+}
+
+/* Layout */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.main-content {
+  margin-left: calc(252px * var(--ui-scale));
+  flex: 1;
+  min-height: 100vh;
+}
+
+.main-content-padded {
+  padding: calc(2rem * var(--ui-scale)) calc(2.5rem * var(--ui-scale));
+}
+
+/* Bootstrap overrides */
+.btn-primary {
+  background-color: #f09848;
+  border-color: #f09848;
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+  background-color: #d98538;
+  border-color: #d98538;
+}
+
+.btn-outline-secondary {
+  color: var(--text-muted);
+  border-color: var(--card-border);
+}
+
+.btn-outline-secondary:hover {
+  background-color: var(--card-border);
+  border-color: var(--card-border);
+  color: var(--text-primary);
+}
+
+.text-muted {
+  color: var(--text-muted) !important;
+}
+
+/* Tooltip — softened from Bootstrap's default near-black to a warm brown
+ * that fits the sandy-amber palette. */
+.tooltip {
+  --bs-tooltip-bg: #6b5840;
+  --bs-tooltip-color: #fff;
+  --bs-tooltip-opacity: 0.97;
+}
+
+/* Small info icon — hover/focus reveals a tooltip. Shared between
+ * DogDetailPage and the Stats KPI cards. */
+.info-tip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.4rem;
+  color: #b8864e;
+  font-size: 0.78em;
+  opacity: 0.55;
+  cursor: help;
+  transition: opacity 0.15s ease;
+}
+
+.info-tip:hover,
+.info-tip:focus {
+  opacity: 1;
+  outline: none;
+}
+
+/* Page headers */
+.page-header {
+  margin-bottom: calc(2rem * var(--ui-scale));
+  max-width: calc(720px * var(--ui-scale));
+}
+
+.page-header h2 {
+  font-family: 'Fredoka', sans-serif;
+  font-size: calc(2rem * var(--ui-scale));
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: calc(0.75rem * var(--ui-scale));
+}
+
+.page-header p {
+  color: var(--text-muted);
+  font-size: calc(1.05rem * var(--ui-scale));
+  line-height: 1.7;
+  margin-bottom: calc(0.5rem * var(--ui-scale));
+}
+
+.page-header p:last-child {
+  margin-bottom: 0;
+}
+
+/* Responsive */
+@media (max-width: 767.98px) {
+  .main-content {
+    margin-left: 0;
+  }
+
+  .main-content-padded {
+    padding: 1rem;
+    padding-top: 70px;
+  }
+}

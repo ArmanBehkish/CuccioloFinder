@@ -1,0 +1,254 @@
+/* Hero section */
+.hero {
+  position: relative;
+  width: 100%;
+  height: calc(clamp(400px, 48vh, 490px) * var(--ui-scale));
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #3a2d20;
+}
+
+.hero-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 45%;
+}
+
+.hero-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(58, 45, 32, 0.25);
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  color: #ffffff;
+  padding: 0 calc(2rem * var(--ui-scale));
+}
+
+.hero-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(1rem * var(--ui-scale));
+}
+
+.hero-title-row > div {
+  text-align: left;
+}
+
+.hero-logo {
+  font-size: calc(4.2rem * var(--ui-scale));
+  color: rgba(255, 255, 255, 0.85);
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.4));
+  flex-shrink: 0;
+}
+
+.hero-content h1 {
+  font-family: 'Fredoka', sans-serif;
+  font-size: calc(3rem * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  margin-bottom: calc(0.15rem * var(--ui-scale));
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.hero-content p {
+  font-family: 'Nunito Sans', sans-serif;
+  font-size: calc(1.1rem * var(--ui-scale));
+  font-weight: 400;
+  opacity: 0.9;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Sections */
+.home-section {
+  max-width: calc(900px * var(--ui-scale));
+  margin: 0 auto;
+  padding: calc(2rem * var(--ui-scale)) calc(2rem * var(--ui-scale));
+}
+
+.home-section + .home-section {
+  padding-top: calc(1.25rem * var(--ui-scale));
+}
+
+.home-section h2 {
+  font-family: 'Fredoka', sans-serif;
+  font-size: calc(1.45rem * var(--ui-scale));
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-primary);
+  margin-bottom: calc(0.75rem * var(--ui-scale));
+}
+
+.home-section p {
+  color: var(--text-muted);
+  line-height: 1.7;
+  font-size: calc(1rem * var(--ui-scale));
+}
+
+.home-section > p:last-child {
+  margin-bottom: 0;
+}
+
+/* Feature cards */
+.feature-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: calc(1.25rem * var(--ui-scale));
+  margin-top: calc(1rem * var(--ui-scale));
+  margin-bottom: calc(2rem * var(--ui-scale));
+}
+
+.feature-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: calc(12px * var(--ui-scale));
+  padding: calc(1.6rem * var(--ui-scale)) calc(1.35rem * var(--ui-scale));
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.2s, box-shadow 0.2s;
+  text-align: center;
+}
+
+.feature-card:hover {
+  transform: translateY(calc(-4px * var(--ui-scale)));
+  box-shadow: 0 8px 24px rgba(58, 45, 32, 0.12);
+  color: inherit;
+  text-decoration: none;
+}
+
+.feature-icon {
+  font-size: calc(1.9rem * var(--ui-scale));
+  margin-bottom: calc(0.75rem * var(--ui-scale));
+  color: #4a4a4a;
+}
+
+.feature-card h3 {
+  font-family: 'Fredoka', sans-serif;
+  font-size: calc(1.12rem * var(--ui-scale));
+  font-weight: 500;
+  color: #3c2a21;
+  margin-bottom: calc(0.5rem * var(--ui-scale));
+}
+
+.feature-card p {
+  font-size: calc(0.94rem * var(--ui-scale));
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* Shelter list */
+.shelter-list {
+  list-style: none;
+  padding: 0;
+  margin-top: calc(0.75rem * var(--ui-scale));
+}
+
+.shelter-list li {
+  padding: calc(0.5rem * var(--ui-scale)) 0;
+  color: var(--text-muted);
+  font-size: calc(0.95rem * var(--ui-scale));
+  border-bottom: 1px solid var(--card-border);
+}
+
+.shelter-list li:last-child {
+  border-bottom: none;
+}
+
+.shelter-list a {
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.shelter-list a:hover {
+  color: #f09848;
+}
+
+
+/* Responsive */
+@media (max-width: 767.98px) {
+  .hero {
+    height: 280px;
+  }
+
+  .hero-logo {
+    font-size: 3rem;
+  }
+
+  .hero-content h1 {
+    font-size: 1.75rem;
+  }
+
+  .hero-content p {
+    font-size: 0.9rem;
+  }
+
+  .hero-title-row {
+    gap: 0.75rem;
+  }
+
+  .feature-cards {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .home-section {
+    padding: 1.5rem 1rem;
+  }
+}
+
+/* Donate banner — solid warm coral. Color choice driven by fundraising
+ * UX research (warm reds / corals outperform cool tones for compassion-
+ * based donate CTAs without tipping into "alarm"). */
+.home-donate-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  max-width: 560px;
+  margin: 0 auto 2.5rem;
+  padding: 0.85rem 1.25rem;
+  background: #f4866a;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+  box-shadow: 0 2px 8px rgba(244, 134, 106, 0.25);
+}
+
+.home-donate-banner:hover {
+  background: #ee6c4d;
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 12px rgba(244, 134, 106, 0.35);
+}
+
+.home-donate-banner-icon {
+  color: #ffffff;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+  .home-donate-banner {
+    max-width: calc(100% - 2rem);
+    font-size: 0.85rem;
+    padding: 0.75rem 1rem;
+  }
+}

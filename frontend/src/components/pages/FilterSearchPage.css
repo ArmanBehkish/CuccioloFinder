@@ -1,0 +1,82 @@
+.filter-panel {
+  background: #f0e9df;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.filter-panel .form-select,
+.filter-panel .form-control {
+  border-color: var(--card-border);
+  font-size: 0.85rem;
+}
+
+.filter-panel .form-select:focus,
+.filter-panel .form-control:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 0.2rem rgba(184, 134, 78, 0.2);
+}
+
+.filter-panel .rbt-input-main {
+  font-size: 0.85rem;
+  border-color: var(--card-border);
+}
+
+.filter-panel .rbt-input-main:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 0.2rem rgba(184, 134, 78, 0.2);
+}
+
+.filter-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  background: #faf5ed;
+  border-left: 3px solid #f09848;
+  border-radius: 4px;
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 0.4rem;
+}
+
+.filter-note:last-of-type {
+  margin-bottom: 2rem;
+}
+
+.filter-note-icon {
+  font-size: 1.1rem;
+  color: #f09848;
+  flex-shrink: 0;
+}
+
+.filter-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.filter-actions .btn {
+  min-width: 7rem;
+  padding: 0.5rem 1.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* Reset button — the default outline-secondary border blends into the
+ * cream filter panel. Give it a white fill + accent-coloured border so it
+ * reads clearly next to the primary Search button. */
+.filter-actions .btn-outline-secondary {
+  background: #ffffff;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.filter-actions .btn-outline-secondary:hover,
+.filter-actions .btn-outline-secondary:focus {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}

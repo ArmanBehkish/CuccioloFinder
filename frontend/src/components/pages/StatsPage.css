@@ -1,0 +1,205 @@
+/* ===== Tabs (browser-tab style) ===== */
+.stats-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 2px solid var(--card-border);
+  margin-bottom: 1.5rem;
+  padding-left: 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.stats-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.1rem;
+  background: #f0e9df;
+  color: var(--text-muted);
+  border: 1px solid var(--card-border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  margin-bottom: -2px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.stats-tab:hover {
+  background: #e9e0d5;
+  color: var(--text-primary);
+}
+
+.stats-tab.active {
+  background: var(--card-bg);
+  color: var(--text-primary);
+  border-color: var(--card-border);
+  border-bottom: 2px solid var(--card-bg);
+  position: relative;
+  z-index: 1;
+}
+
+/* ===== KPI strip ===== */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+}
+
+.kpi-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 1.6rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.35rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.kpi-card-accent {
+  border-left: 5px solid var(--accent);
+}
+
+.kpi-card-value {
+  font-family: 'Fredoka', sans-serif;
+  font-size: 2.6rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.05;
+}
+
+.kpi-card-label {
+  font-size: 0.98rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ===== Chart cards ===== */
+.chart-grid {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.chart-grid-2 { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+.chart-grid-3 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.chart-grid-4 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+
+.chart-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 1rem 1.1rem 1.2rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.chart-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.chart-card-titles {
+  flex: 1;
+}
+
+.chart-card-title {
+  font-family: 'Fredoka', sans-serif;
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.chart-card-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.chart-card-pill {
+  display: inline-block;
+  padding: 0.18rem 0.55rem;
+  background: #fdf0e0;
+  color: #b8864e;
+  border: 1px solid #f3dec3;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.chart-card-body {
+  width: 100%;
+  /* Height is set inline per chart so ResponsiveContainer can measure it. */
+}
+
+/* ===== Single-shelter section ===== */
+.single-shelter-section {
+  background: #fdf6ec;
+  border: 1px solid #f3dec3;
+  border-left: 4px solid #f09848;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1.25rem;
+}
+
+.single-shelter-section .chart-card {
+  background: #ffffff;
+}
+
+.single-shelter-section-title {
+  font-family: 'Fredoka', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #6b4a1f;
+  margin: 0 0 1.1rem 0;
+}
+
+/* ===== Section heading ===== */
+.stats-section-heading {
+  font-family: 'Fredoka', sans-serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #3c2a21;
+  margin: 0.5rem 0 0.85rem;
+}
+
+/* When a section heading follows a standalone ChartCard (no chart-grid
+ * wrapper providing its own bottom gap), give it real breathing room. */
+.chart-card + .stats-section-heading {
+  margin-top: 2rem;
+}
+
+.stats-note {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-bottom: 1rem;
+}
+
+/* ===== Recharts overrides ===== */
+.recharts-default-tooltip {
+  border-radius: 6px !important;
+  border-color: var(--card-border) !important;
+  font-size: 0.82rem !important;
+  background: rgba(255, 255, 255, 0.97) !important;
+}
+
+.recharts-legend-item-text {
+  color: var(--text-primary) !important;
+  font-size: 0.78rem;
+}

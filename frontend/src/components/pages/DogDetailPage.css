@@ -1,0 +1,298 @@
+.dog-detail-name {
+  font-family: 'Fredoka', sans-serif;
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: #3c2a21;
+  margin-bottom: 0.25rem;
+}
+
+.dog-detail-source {
+  font-size: 0.75rem;
+  color: #4a4a4a;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+  padding: 0.15rem 0.5rem;
+  white-space: nowrap;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.dog-detail-media-col {
+  align-self: stretch;
+}
+
+.dog-detail-carousel {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  height: 100%;
+  min-height: 650px;
+}
+
+.dog-detail-carousel .carousel-inner {
+  height: 100%;
+}
+
+.dog-detail-carousel .carousel-item {
+  height: 100%;
+}
+
+.dog-detail-carousel .carousel-item > a {
+  display: block;
+  height: 100%;
+}
+
+.dog-detail-carousel-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 20%;
+  cursor: pointer;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.dog-detail-no-photo {
+  height: 100%;
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sidebar-bg);
+  color: var(--text-muted);
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+}
+
+.dog-detail-table {
+  margin-bottom: 0;
+}
+
+.dog-detail-table td {
+  padding: 0.5rem 0.75rem;
+  border-color: var(--card-border);
+  vertical-align: middle;
+}
+
+.detail-label {
+  font-weight: 600;
+  color: var(--text-muted);
+  width: 40%;
+  white-space: nowrap;
+}
+
+.detail-value-with-source {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 11.5rem;
+  align-items: center;
+  column-gap: 1.25rem;
+}
+
+/* Narrow viewports: collapse to a single column so the "From DESC" badge
+ * sits below the breed text instead of being centred against a wrapped
+ * second line. */
+@media (max-width: 1100px) {
+  .detail-value-with-source {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.35rem;
+  }
+  .detail-value-with-source .detail-desc-marker {
+    justify-self: start;
+  }
+}
+
+.detail-desc-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: start;
+  min-height: 1.45rem;
+  padding: 0.16rem 0.55rem;
+  border: 1px solid #4f8f78;
+  border-radius: 5px;
+  background: #eef8f3;
+  color: #2f6f5b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.detail-section-box {
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.detail-section-title {
+  text-align: center;
+  font-weight: 600;
+  color: #3c2a21;
+  padding: 0.5rem 0.75rem;
+  background: #f0e9df;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.detail-section-box .dog-detail-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Inline flow — the rank pill sits as an inline-block element next to the
+ * breed name's first word so line-breaks happen *inside* the name (not
+ * before the rank). Flex was making the entire name wrap as a single item,
+ * leaving the rank stranded on the previous line. */
+.breed-guess {
+  line-height: 1.55;
+}
+
+.breed-guess-secondary {
+  margin-top: 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.breed-guess-rank {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #4a4a4a;
+  background: #f0ebe4;
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  margin-right: 0.15rem;
+  vertical-align: 1px;
+}
+
+.breed-confidence {
+  font-size: 0.72rem;
+  color: #f09848;
+  border: 1px solid #f09848;
+  border-radius: 6px;
+  padding: 0.1rem 0.45rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.breed-confidence-combined {
+  color: #fff;
+  background: #f09848;
+  border-color: #f09848;
+}
+
+/* Breed-method body: 2-col grid — breed names on the left, percentages
+ * (and info tooltip) in a tidy right column. For the Behaviour pair case
+ * the % cell spans both rows and is vertically centered. */
+.breed-method-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 2.25rem;
+  row-gap: 0.35rem;
+  align-items: center;
+  padding-right: 1.25rem;
+}
+
+/* Row-gap handles the vertical spacing inside the grid; the legacy margin
+ * on .breed-guess-secondary would double it up. */
+.breed-method-grid .breed-guess-secondary {
+  margin-top: 0;
+}
+
+.breed-method-pct-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  justify-self: start;
+}
+
+/* Coverage is dog-level — the single % cell spans both breed rows so it
+ * sits centered between them. */
+.breed-method-pct-cell-shared {
+  grid-row: span 2;
+  align-self: center;
+}
+
+/* .info-tip styling lives in App.css (shared with the Stats page). */
+
+.badge-good-with,
+.badge-bad-with {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.9rem;
+  color: #1a1a1a;
+  font-size: 0.88rem;
+  padding: 0.3rem 0.7rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.badge-from-desc {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.compat-desc-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.25rem;
+  padding: 0 0.4rem;
+  border: 1px solid #4f8f78;
+  border-radius: 5px;
+  background: #eef8f3;
+  color: #2f6f5b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.badge-good-with {
+  background: #c8e6c0;
+}
+
+.badge-bad-with {
+  background: #e9a8a8;
+}
+
+.dog-detail-section-heading {
+  color: #3c2a21;
+  margin-bottom: 1rem;
+}
+
+.dog-detail-description-box {
+  background: linear-gradient(90deg, #fdf0e0 0%, #ffffff 100%);
+  border: 1px solid #f3dec3;
+  border-left: 4px solid #f09848;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 2px 12px rgba(240, 152, 72, 0.1);
+}
+
+.dog-detail-description {
+  color: var(--text-primary);
+  line-height: 1.7;
+  white-space: pre-line;
+  margin: 0;
+}
+
+@media (max-width: 767.98px) {
+  .dog-detail-carousel,
+  .dog-detail-carousel .carousel-inner,
+  .dog-detail-carousel .carousel-item {
+    height: auto;
+    min-height: 0;
+  }
+
+  .dog-detail-carousel-img {
+    height: 280px;
+  }
+
+  .dog-detail-no-photo {
+    min-height: 200px;
+  }
+}

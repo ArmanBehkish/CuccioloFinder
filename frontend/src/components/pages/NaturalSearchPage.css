@@ -1,0 +1,139 @@
+.smart-search-panel {
+  background: #f0e9df;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.smart-search-panel textarea.form-control {
+  border-color: var(--card-border);
+  font-size: 0.95rem;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.smart-search-panel textarea.form-control:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 0.2rem rgba(184, 134, 78, 0.2);
+}
+
+.smart-search-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+}
+
+.smart-search-panel .form-control[type="number"] {
+  border-color: var(--card-border);
+  font-size: 0.85rem;
+  max-width: 90px;
+}
+
+.smart-search-examples {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 1.25rem;
+}
+
+.smart-search-examples-label {
+  font-weight: 600;
+  margin-right: 0.15rem;
+}
+
+.smart-search-example-btn {
+  background: none;
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.smart-search-example-btn:hover {
+  background: #f09848;
+  color: #fff;
+  border-color: #f09848;
+}
+
+.extracted-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  background: #faf5ed;
+  border-left: 3px solid #f09848;
+  border-radius: 4px;
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.extracted-filters-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.extracted-filters-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.extracted-filter-badge {
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: 1px solid var(--card-border) !important;
+  text-transform: capitalize;
+}
+
+.smart-search-empty-hint {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.smart-search-empty-hint a {
+  color: #f09848;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.smart-search-empty-hint a:hover {
+  text-decoration: underline;
+}
+
+/* TEMPORARY — remove after testing */
+.debug-raw-output {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.82rem;
+}
+
+.debug-raw-output strong {
+  color: #f09848;
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.debug-raw-output pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #d4d4d4;
+}

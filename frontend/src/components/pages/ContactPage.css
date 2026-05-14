@@ -1,0 +1,238 @@
+.contact-page .page-header p {
+  max-width: 540px;
+}
+
+.contact-card {
+  background: #fff;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.contact-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.contact-card-header h5 {
+  margin: 0;
+  font-family: 'Fredoka', sans-serif;
+  font-weight: 600;
+  color: #3c2a21;
+  font-size: 1.1rem;
+}
+
+.contact-card-icon {
+  font-size: 1.3rem;
+  color: #f09848;
+  flex-shrink: 0;
+}
+
+.contact-card-text {
+  font-size: 0.92rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 0.75rem;
+}
+
+/* Contact form */
+.contact-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.contact-card .form-control,
+.contact-card .form-select {
+  border-color: var(--card-border);
+  font-size: 0.9rem;
+}
+
+.contact-card .form-control:focus,
+.contact-card .form-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 0.2rem rgba(184, 134, 78, 0.2);
+}
+
+.contact-card textarea.form-control {
+  resize: vertical;
+  min-height: 120px;
+}
+
+/* Success state */
+.contact-success {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.contact-success-icon {
+  font-size: 2.5rem;
+  color: #f09848;
+  margin-bottom: 0.75rem;
+}
+
+.contact-success p {
+  font-size: 1rem;
+  color: #3c2a21;
+  font-weight: 500;
+  margin-bottom: 1rem;
+}
+
+/* Donate card */
+.contact-card-donate {
+  background: #faf5ed;
+}
+
+.donate-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.donate-link {
+  display: inline-block;
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  background: #f4866a;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.donate-link:hover {
+  background: #ee6c4d;
+  color: #fff;
+}
+
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  background: #24292f;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.github-link:hover {
+  background: #3a4047;
+  color: #fff;
+}
+
+.github-link-icon {
+  font-size: 1rem;
+}
+
+/* Get Involved list */
+.contact-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.contact-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  padding: 0.35rem 0;
+  line-height: 1.5;
+}
+
+.contact-list-icon {
+  font-size: 0.85rem;
+  color: #f09848;
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+/* Shelter list */
+.contact-shelter-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.contact-shelter-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0;
+}
+
+.contact-shelter-check {
+  font-size: 0.85rem;
+  color: #f09848;
+  flex-shrink: 0;
+}
+
+.contact-shelter-list a {
+  font-size: 0.9rem;
+  color: #3c2a21;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.contact-shelter-list a:hover {
+  color: #f09848;
+}
+
+.contact-external-icon {
+  font-size: 0.75rem;
+  margin-left: 0.2rem;
+  opacity: 0.5;
+}
+
+.contact-captcha {
+  margin: 0.25rem 0 0.85rem;
+}
+
+.contact-error {
+  padding: 0.55rem 0.85rem;
+  margin: 0 0 0.85rem;
+  font-size: 0.88rem;
+}
+
+/* Vertically centre the dismiss button inside the alert. Bootstrap's
+ * default places it via padding which drifts when the alert is short. */
+.contact-error .btn-close {
+  align-self: center;
+  padding: 0.4rem;
+  margin: 0;
+}
+
+.contact-disclosure {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin: 0.85rem 0 0;
+  line-height: 1.45;
+}
+
+.contact-disclosure a {
+  color: var(--text-muted);
+  text-decoration: underline;
+}
+
+.contact-disclosure a:hover {
+  color: var(--accent);
+}
+
+/* Responsive */
+@media (max-width: 991.98px) {
+  .contact-page .row > [class*="col-"]:first-child {
+    margin-bottom: 0.5rem;
+  }
+}

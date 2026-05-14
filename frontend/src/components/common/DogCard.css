@@ -1,0 +1,78 @@
+.dog-card-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.dog-card {
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(58, 45, 32, 0.08);
+}
+
+.dog-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(58, 45, 32, 0.12);
+}
+
+.dog-card-img {
+  height: 280px;
+  object-fit: cover;
+  object-position: center 20%;
+}
+
+.dog-card-placeholder {
+  height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f3ede6, #e9e0d5);
+}
+
+.dog-card-placeholder-icon {
+  font-size: 4rem;
+  color: #c4b5a4;
+  opacity: 0.6;
+}
+
+.dog-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.dog-card-name {
+  font-family: 'Fredoka', sans-serif;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #3c2a21;
+  margin-bottom: 0;
+}
+
+.dog-card-source {
+  font-size: 0.68rem;
+  color: #4a4a4a;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+  padding: 0.15rem 0.45rem;
+  white-space: nowrap;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+}
+
+.dog-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dog-card-badges .badge {
+  font-weight: 500;
+  font-size: 0.72rem;
+  border: 1px solid var(--card-border);
+}
