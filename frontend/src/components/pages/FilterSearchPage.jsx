@@ -12,7 +12,7 @@ import Pagination from '../common/Pagination';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorAlert from '../common/ErrorAlert';
 import { useEnums } from '../../hooks/useEnums';
-import { useFilterSearch, TIME_INTERVALS } from '../../hooks/useFilterSearch';
+import { useFilterSearch, TIME_INTERVALS, SCRAPED_INTERVALS } from '../../hooks/useFilterSearch';
 import { getWorkerStatus } from '../../api/dogs';
 import { PiCatFill } from 'react-icons/pi';
 import InfoTip from '../common/InfoTip';
@@ -84,7 +84,7 @@ function FilterSearchPage() {
       source_site: '', gender: '', size: '', breed_claimed: '', breed_detected: '',
       age: '', fur: '', weight: '', good_with: '', bad_with: '',
       microchip: '', sterilization: '', vaccine: '', deworming: '',
-      posted_interval: '', shelter_interval: '',
+      extracted_interval: '', posted_interval: '', shelter_interval: '',
     }, 1);
   };
 
@@ -215,24 +215,8 @@ function FilterSearchPage() {
           </Col>
         </Row>
 
-        {/* Row 3 */}
+        {/* Row 3 — medical block (microchip, sterilization, vaccine, deworming) */}
         <Row className="g-2 mb-2">
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Good With"
-              value={filters.good_with}
-              options={enums?.good_with_en || []}
-              onChange={(v) => updateFilter('good_with', v)}
-            />
-          </Col>
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Bad With"
-              value={filters.bad_with}
-              options={enums?.bad_with_en || []}
-              onChange={(v) => updateFilter('bad_with', v)}
-            />
-          </Col>
           <Col xs={6} md={3}>
             <FilterDropdown
               label="Microchip"
@@ -249,10 +233,6 @@ function FilterSearchPage() {
               onChange={(v) => updateFilter('sterilization', v)}
             />
           </Col>
-        </Row>
-
-        {/* Row 4 */}
-        <Row className="g-2 mb-2">
           <Col xs={6} md={3}>
             <FilterDropdown
               label="Vaccine"
@@ -269,10 +249,54 @@ function FilterSearchPage() {
               onChange={(v) => updateFilter('deworming', v)}
             />
           </Col>
-          <Col xs={6} md={3}>
+        </Row>
+
+        {/* Row 4 — compatibility pair (wider columns, just two items) */}
+        <Row className="g-2 mb-2">
+          <Col xs={12} md={6}>
+            <FilterDropdown
+              label="Good With"
+              value={filters.good_with}
+              options={enums?.good_with_en || []}
+              onChange={(v) => updateFilter('good_with', v)}
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <FilterDropdown
+              label="Bad With"
+              value={filters.bad_with}
+              options={enums?.bad_with_en || []}
+              onChange={(v) => updateFilter('bad_with', v)}
+            />
+          </Col>
+        </Row>
+
+        {/* Row 5 — date filters (3 evenly-spaced columns) */}
+        <Row className="g-2 mb-2">
+          <Col xs={12} md={4}>
             <Form.Group>
               <Form.Label className="small text-muted mb-1">
-                Posted on Site
+                Extracted At
+                <InfoTip id="filter-extracted-tip">
+                  When the dog first appeared in our database. Works for all shelters.
+                </InfoTip>
+              </Form.Label>
+              <Form.Select
+                size="sm"
+                value={filters.extracted_interval}
+                onChange={(e) => updateFilter('extracted_interval', e.target.value)}
+              >
+                <option value="">All</option>
+                {SCRAPED_INTERVALS.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+          </Col>
+          <Col xs={12} md={4}>
+            <Form.Group>
+              <Form.Label className="small text-muted mb-1">
+                Posted on Shelter Website
                 <InfoTip id="filter-posted-tip">
                   Only available for: {postDateShelters.length ? postDateShelters.join(', ') : 'no shelters yet'}.
                 </InfoTip>
@@ -292,7 +316,7 @@ function FilterSearchPage() {
               </Form.Select>
             </Form.Group>
           </Col>
-          <Col xs={6} md={3}>
+          <Col xs={12} md={4}>
             <Form.Group>
               <Form.Label className="small text-muted mb-1">
                 In Shelter Since
@@ -317,7 +341,7 @@ function FilterSearchPage() {
           </Col>
         </Row>
 
-        {/* Row 5 — actions */}
+        {/* Row 6 — actions */}
         <div className="filter-actions">
           <Button variant="primary" onClick={handleSearch} disabled={loading || workerBusy}>
             {loading ? 'Searching...' : 'Search'}

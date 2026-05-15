@@ -558,6 +558,12 @@ class FilterDogsParams(BaseModel):
     post_date_to: date | None = None
     shelter_since_from: date | None = None
     shelter_since_to: date | None = None
+    # `scraped_at` is set on row INSERT and never refreshed by upserts, so it
+    # effectively behaves as "first seen in the DB" — the right semantics for a
+    # "recently added" filter. Unlike post_date / shelter_since, it's populated
+    # for every dog regardless of shelter.
+    scraped_at_from: date | None = None
+    scraped_at_to: date | None = None
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=20, ge=1, le=100)
 
@@ -683,6 +689,10 @@ def filter_dogs(params: FilterDogsParams = Depends()):
             q = q.where(Dog.post_date >= params.post_date_from)
         if params.post_date_to:
             q = q.where(Dog.post_date <= params.post_date_to)
+        if params.scraped_at_from:
+            q = q.where(Dog.scraped_at >= params.scraped_at_from)
+        if params.scraped_at_to:
+            q = q.where(Dog.scraped_at <= params.scraped_at_to)
 
         dogs = session.execute(q).scalars().all()
 

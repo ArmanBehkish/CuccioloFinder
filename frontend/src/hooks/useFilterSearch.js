@@ -23,6 +23,9 @@ const INITIAL_FILTERS = {
   sterilization: '',
   vaccine: '',
   deworming: '',
+  // Extraction recency — when the dog was first scraped into our DB.
+  // Sent to the API as `scraped_at_from`. Universal across shelters.
+  extracted_interval: '',
   posted_interval: '',
   shelter_interval: '',
 };
@@ -41,6 +44,8 @@ function saveState(filters, page, results) {
   } catch { /* ignore */ }
 }
 
+// Intervals for `posted_interval` (post_date) and `shelter_interval`
+// (shelter_since). Span years because shelter listings can be very old.
 export const TIME_INTERVALS = [
   { value: '1w', label: 'Last week' },
   { value: '2w', label: 'Last 2 weeks' },
@@ -52,6 +57,16 @@ export const TIME_INTERVALS = [
   { value: '2y+', label: 'More than 2 years' },
 ];
 
+// Tighter intervals for the "Extracted At" filter — our DB only goes back
+// a few months and the useful question is "what showed up recently".
+export const SCRAPED_INTERVALS = [
+  { value: '1d', label: 'Last day' },
+  { value: '3d', label: 'Last 3 days' },
+  { value: '1w', label: 'Last week' },
+  { value: '2w', label: 'Last 2 weeks' },
+  { value: '1m', label: 'Last month' },
+];
+
 function daysAgo(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
@@ -61,6 +76,8 @@ function daysAgo(days) {
 function intervalToDateParams(interval, fromKey, toKey) {
   if (!interval) return {};
   switch (interval) {
+    case '1d': return { [fromKey]: daysAgo(1) };
+    case '3d': return { [fromKey]: daysAgo(3) };
     case '1w': return { [fromKey]: daysAgo(7) };
     case '2w': return { [fromKey]: daysAgo(14) };
     case '1m': return { [fromKey]: daysAgo(30) };
@@ -88,12 +105,14 @@ export function useFilterSearch() {
       const {
         posted_interval,
         shelter_interval,
+        extracted_interval,
         breed_claimed,
         ...apiFilters
       } = searchFilters;
       const dateParams = {
         ...intervalToDateParams(posted_interval, 'post_date_from', 'post_date_to'),
         ...intervalToDateParams(shelter_interval, 'shelter_since_from', 'shelter_since_to'),
+        ...intervalToDateParams(extracted_interval, 'scraped_at_from', 'scraped_at_to'),
       };
       const data = await filterDogs({
         ...apiFilters,
