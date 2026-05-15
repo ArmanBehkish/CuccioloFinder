@@ -39,6 +39,11 @@ SEARCH_MODEL_PATH = os.environ.get(
 WORKER_BUSY_TIMEOUT = 3 * 3600  # auto-clear after 3 hours
 WORKER_STATUS_FILE = Path(os.environ.get("WORKER_STATUS_FILE", "data/.worker_busy"))
 
+# `good_with` / `bad_with` enum cutoff. A tag is included iff strictly
+# more than this many dogs have it (across `_en` ∪ `_from_desc`). Keeps
+# the LLM prompt lean and drops the long tail of one-off phrases.
+_COMPAT_TAG_MIN_DOGS = 5
+
 
 @dataclass
 class AppState:
@@ -284,28 +289,58 @@ def _reload_caches() -> int:
                 weight_cats.add(cat)
         enums["weight"] = sorted(weight_cats)
 
-        # good_with_en / bad_with_en: flatten JSON arrays
-        def flatten_json_array(col):
-            values: set[str] = set()
-            for (arr,) in session.execute(
-                select(col).where(col.isnot(None), Dog.superseded_at.is_(None))
-            ).all():
-                if isinstance(arr, list):
-                    for v in arr:
-                        if v:
-                            values.add(v)
-                elif isinstance(arr, str):
-                    try:
-                        parsed = json.loads(arr)
-                        for v in parsed:
-                            if v:
-                                values.add(v)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-            return sorted(values)
+        # good_with_en / bad_with_en: build the tag enum from the *union*
+        # of the structured `_en` column and the LLM-extracted `_from_desc`
+        # column, then keep only tags that appear on more than
+        # `_COMPAT_TAG_MIN_DOGS` dogs.
+        #
+        # Why union: `_en` is narrow shelter-structured wording ("elderly",
+        # "male dogs", "houses without garden") while `_from_desc` carries
+        # the rich natural tags the description actually uses ("people",
+        # "other dogs", "experienced owners"). Smart-search and stats both
+        # need the richer pool; the SQL filter already resolves across both
+        # columns via `_like_resolved`.
+        #
+        # Why a frequency cutoff: every tag here lives twice — in the
+        # filter-page dropdown and in the LLM prompt's allowed-list. The
+        # `_from_desc` long tail is noisy (one-off phrases, typos) and
+        # blows up the prompt for marginal benefit. Cutting at "more than
+        # 5 dogs" keeps the well-attested tags ("people"=124, "other
+        # dogs"=32, …) and drops singletons.
+        #
+        # The key name stays `good_with_en` to avoid churn at frontend
+        # readers; semantically it's now the resolved-and-frequency-gated
+        # tag set.
+        def build_compat_tag_enum(col_en, col_fd) -> list[str]:
+            from collections import Counter
 
-        enums["good_with_en"] = flatten_json_array(Dog.good_with_en)
-        enums["bad_with_en"] = flatten_json_array(Dog.bad_with_en)
+            dog_counts: Counter[str] = Counter()
+            for en_arr, fd_arr in session.execute(
+                select(col_en, col_fd).where(Dog.superseded_at.is_(None))
+            ).all():
+                tags: set[str] = set()
+                for arr in (en_arr, fd_arr):
+                    if isinstance(arr, list):
+                        tags.update(v for v in arr if isinstance(v, str) and v)
+                    elif isinstance(arr, str):
+                        try:
+                            parsed = json.loads(arr)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                        if isinstance(parsed, list):
+                            tags.update(
+                                v for v in parsed if isinstance(v, str) and v
+                            )
+                for t in tags:
+                    dog_counts[t] += 1
+            return sorted(t for t, c in dog_counts.items() if c > _COMPAT_TAG_MIN_DOGS)
+
+        enums["good_with_en"] = build_compat_tag_enum(
+            Dog.good_with_en, Dog.good_with_from_desc
+        )
+        enums["bad_with_en"] = build_compat_tag_enum(
+            Dog.bad_with_en, Dog.bad_with_from_desc
+        )
 
         # `breed_allowed` — the verbatim-allowed list fed to the smart-search
         # LLM prompt. Union of breed strings that actually exist on active
