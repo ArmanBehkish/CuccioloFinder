@@ -307,16 +307,30 @@ def _reload_caches() -> int:
         enums["good_with_en"] = flatten_json_array(Dog.good_with_en)
         enums["bad_with_en"] = flatten_json_array(Dog.bad_with_en)
 
-        # Top-N most frequent breeds — used as a soft hint in the extraction
-        # prompt so the model recognizes common breeds without restricting output.
-        top_breed_rows = session.execute(
-            select(Dog.breed_en, func.count(Dog.id))
-            .where(Dog.breed_en.isnot(None), Dog.breed_en != "", Dog.superseded_at.is_(None))
-            .group_by(Dog.breed_en)
-            .order_by(func.count(Dog.id).desc())
-            .limit(20)
-        ).all()
-        enums["breed_en_top"] = [b for b, _ in top_breed_rows if b]
+        # `breed_allowed` — the verbatim-allowed list fed to the smart-search
+        # LLM prompt. Union of breed strings that actually exist on active
+        # dogs: claimed breeds (breed_en ∪ breed_from_desc) plus AI-detected
+        # breeds from the image classifier. We exclude the 2nd-choice and
+        # cat_similarity rows so the candidate list reflects what a human
+        # would call "what the photo most clearly shows" plus what shelters
+        # claim — not every weakly-related guess.
+        #
+        # The same list is reused by `_validate_breed` as the membership
+        # gate, so prompt and validator can't drift. Mistral's call site
+        # ignores it (n_ctx=2048 budget).
+        breed_allowed: set[str] = set(enums["breed_claimed"])
+        for (val,) in session.execute(
+            select(InferredDogBreed.value)
+            .join(Dog, Dog.id == InferredDogBreed.dog_id)
+            .where(
+                Dog.superseded_at.is_(None),
+                InferredDogBreed.method == "image",
+            )
+            .distinct()
+        ).all():
+            if val:
+                breed_allowed.add(val)
+        enums["breed_allowed"] = sorted(breed_allowed)
 
         # date ranges
         min_post, max_post = session.execute(
@@ -440,7 +454,7 @@ def enums():
     """Return distinct values for every filterable field, served from cache."""
     if not _state.enums_cache:
         raise HTTPException(status_code=503, detail="Enums not available — DB unreachable or cache never refreshed after a failed start")
-    return {k: v for k, v in _state.enums_cache.items() if k != "breed_en_top"}
+    return {k: v for k, v in _state.enums_cache.items() if k != "breed_allowed"}
 
 
 #### GET /api/stats
@@ -863,29 +877,36 @@ _GOOD_BAD_WITH_FALLBACK = ["children", "elderly", "cats", "dogs"]
 def _build_extraction_system_prompt(
     good_with: list[str],
     bad_with: list[str],
-    common_breeds: list[str],
+    allowed_breeds: list[str],
 ) -> str:
     """Build the filter-extraction system prompt body (no [INST] wrappers).
 
-    `common_breeds` MUST be empty for the Mistral call site — n_ctx=2048 on
+    `allowed_breeds` MUST be empty for the Mistral call site — n_ctx=2048 on
     the CPU-only 8 GB VPS makes long breed enumerations expensive (RAM +
-    latency). Pass the top-N list only on the Groq call site.
+    latency). Pass the breed list only on the Groq / OpenRouter call sites.
+    The list reflects the breeds that actually exist in the DB (claimed +
+    image-detected) so the LLM's output always corresponds to dogs the
+    user can find.
     """
     gw = ", ".join(good_with) if good_with else ", ".join(_GOOD_BAD_WITH_FALLBACK)
     bw = ", ".join(bad_with) if bad_with else ", ".join(_GOOD_BAD_WITH_FALLBACK)
 
-    if common_breeds:
+    if allowed_breeds:
         breed_line = (
-            f"- breed: the OUTPUT must be EXACTLY one of these allowed values (verbatim): {', '.join(common_breeds)}. "
-            "If the user mentions a breed using a loose, partial, or related name (e.g. \"bulldog\", \"lab\", \"shepherd\"), use your judgment to pick the closest match from this list. "
-            "If no value in the list reasonably matches the user's intent, OMIT the breed field entirely. NEVER output a breed name that is not in this list."
+            f"- breed: a JSON ARRAY (not a string) of every entry from this allowed list that could plausibly match the user's intent (verbatim): {', '.join(allowed_breeds)}. "
+            "Include synonyms, abbreviations, mixes, and canonical-vs-short forms of the same breed (e.g. \"lab\" → both \"Labrador Retriever\" and \"Labrador\", \"golden\" → both \"Golden Retriever\" and \"golden\" if present). "
+            "Do NOT include unrelated breeds just because they share a group (e.g. don't add \"Labrador Retriever\" when the user asked for \"Golden Retriever\" just because both are retrievers). "
+            "If no entry in the list plausibly matches, output an empty array [] or OMIT the field. NEVER output a breed name that is not in the allowed list."
         )
         breed_rule = (
-            "- breed: the output value MUST be copied verbatim from the allowed list above. "
-            "You may interpret loose user phrasing to find the best-matching list entry, but the field value itself must be from the list — or omitted entirely. Never invent or substitute a name outside the list.\n"
+            "- breed: a JSON array of zero or more values, each copied verbatim from the allowed list above. "
+            "You may interpret loose phrasing to nominate multiple list entries that describe the same breed, but every value must be in the list — or the array must be empty.\n"
         )
     else:
-        breed_line = "- breed: any breed name (e.g. \"German Shepherd\", \"Golden Retriever\")"
+        breed_line = (
+            "- breed: a JSON ARRAY of one or more breed names (e.g. [\"Golden Retriever\", \"golden\"]). "
+            "Include canonical and short/mix variants so downstream search can match both. Empty array or omit if no breed is mentioned."
+        )
         breed_rule = ""
 
     return (
@@ -912,57 +933,75 @@ def _build_extraction_system_prompt(
         "Examples:\n"
         "\n"
         "Text: \"big male dog with long fur, maybe a German Shepherd, good with elderly but not with cats\"\n"
-        "{\"size\": \"large\", \"gender\": \"male\", \"fur\": \"long\", \"breed\": \"German Shepherd\", \"good_with\": [\"elderly\"], \"bad_with\": [\"cats\"]}\n"
+        "{\"size\": \"large\", \"gender\": \"male\", \"fur\": \"long\", \"breed\": [\"German Shepherd\", \"German Shepherd Dog\", \"German Shepherd mix\"], \"good_with\": [\"elderly\"], \"bad_with\": [\"cats\"]}\n"
         "\n"
         "Text: \"lightweight puppy good with kids and elderly\"\n"
         "{\"weight\": \"light\", \"age\": \"puppy\", \"good_with\": [\"children\", \"elderly\"]}\n"
+        "\n"
+        "Text: \"a golden retriever that's good with elderly\"\n"
+        "{\"breed\": [\"Golden Retriever\", \"golden\", \"golden-mix\"], \"good_with\": [\"elderly\"]}\n"
         "\n"
         "Text: \"small female puppy that likes cats\"\n"
         "{\"size\": \"small\", \"gender\": \"female\", \"age\": \"puppy\", \"good_with\": [\"cats\"]}"
     )
 
 
-def _validate_breed(breed_input: str) -> str | None:
-    """Validate LLM-extracted breed against the breeds table.
+def _validate_breed(breed_input, allowed: set[str]) -> list[str]:
+    """Membership gate: keep only LLM-emitted breed candidates that are
+    verbatim in the prompt's allowed list (case-insensitive). Returns a
+    deduped list preserving the LLM's emission order.
 
-    Returns canonical name on exact or single partial match.
-    Returns None if no match, multiple matches, or sentinel value.
+    `breed_input` may be a string (legacy single-pick) or a list (current
+    multi-pick design). `allowed` is the same set used to render the
+    prompt — `breed_allowed` from the enums cache: claimed breeds ∪
+    image-detected breeds. Sentinel values ("any", "mixed", "mutt", …)
+    are dropped. Anything outside the list is dropped — the SQL filter
+    would otherwise return nothing or, worse, the wrong dogs.
     """
-    from .database.models import Breed
+    if not breed_input:
+        return []
+    if isinstance(breed_input, str):
+        candidates: list[str] = [breed_input]
+    elif isinstance(breed_input, list):
+        candidates = [c for c in breed_input if isinstance(c, str)]
+    else:
+        return []
 
-    if not breed_input or breed_input.strip().lower() in _STRIP_VALUES | {"mixed", "mutt"}:
-        return None
-
-    engine = _state.engine or get_engine(DEFAULT_DB_PATH)
-    session_factory = get_session(engine)
-    with session_factory() as session:
-        exact = session.query(Breed).filter(Breed.name.ilike(breed_input.strip())).first()
-        if exact:
-            return exact.name
-        matches = session.query(Breed).filter(Breed.name.ilike(f"%{breed_input.strip()}%")).all()
-        if len(matches) == 1:
-            return matches[0].name
-    return None
+    allowed_lower = {a.lower(): a for a in allowed}
+    seen: set[str] = set()
+    out: list[str] = []
+    for c in candidates:
+        s = c.strip()
+        if not s or s.lower() in _STRIP_VALUES | {"mixed", "mutt"}:
+            continue
+        canonical = allowed_lower.get(s.lower())
+        if canonical and canonical not in seen:
+            out.append(canonical)
+            seen.add(canonical)
+    return out
 
 
 def _postprocess_filters(
     raw_filters: dict,
     good_with_valid: set[str],
     bad_with_valid: set[str],
+    allowed_breeds: set[str],
 ) -> dict:
     """Validate and normalize LLM-extracted filters.
 
-    `good_with_valid`/`bad_with_valid` are derived from the same enum source
-    used to build the prompt, so prompt and validator stay in sync.
+    `good_with_valid`/`bad_with_valid`/`allowed_breeds` are derived from
+    the same enum source used to build the prompt, so prompt and validator
+    stay in sync. The breed field becomes a list of candidates — see
+    `_validate_breed` for the shape.
     """
     cleaned: dict[str, Any] = {}
     list_field_valid = {"good_with": good_with_valid, "bad_with": bad_with_valid}
 
     for key, value in raw_filters.items():
         if key == "breed":
-            validated = _validate_breed(value if isinstance(value, str) else "")
-            if validated:
-                cleaned[key] = validated
+            validated_list = _validate_breed(value, allowed_breeds)
+            if validated_list:
+                cleaned[key] = validated_list
         elif key in list_field_valid:
             valid_set = list_field_valid[key]
             if isinstance(value, str):
@@ -1023,7 +1062,7 @@ def _extract_filters(query: str) -> tuple[dict, str]:
     """Dispatch filter extraction to the configured backend.
 
     Reads dynamic enum values from the cache, builds the shared system prompt
-    (with a top-N breed hint on remote paths — Mistral's context budget
+    (with the breed allowed-list on remote paths — Mistral's context budget
     can't afford the extra tokens), and post-processes against the same enum
     sets used to build the prompt.
     """
@@ -1032,12 +1071,19 @@ def _extract_filters(query: str) -> tuple[dict, str]:
     bad_with = enums.get("bad_with_en") or list(_GOOD_BAD_WITH_FALLBACK)
 
     backend = get_search_backend()
-    common_breeds = (
-        enums.get("breed_en_top", []) if backend in ("groq", "openrouter") else []
+    # The full allowed-list always feeds the *validator* (gate vs. real DB
+    # breeds, runs in Python after inference). The *prompt* only receives
+    # it on remote backends — Mistral's n_ctx=2048 budget can't carry the
+    # extra tokens, so its prompt body stays lean ("any breed name").
+    breed_allowed = enums.get("breed_allowed", [])
+    breeds_for_prompt = breed_allowed if backend in ("groq", "openrouter") else []
+    logger.info(
+        f"Search extraction: backend={backend}, "
+        f"allowed_breeds_count={len(breed_allowed)}, "
+        f"in_prompt={len(breeds_for_prompt) > 0}"
     )
-    logger.info(f"Search extraction: backend={backend}, common_breeds={common_breeds}")
 
-    system_prompt = _build_extraction_system_prompt(good_with, bad_with, common_breeds)
+    system_prompt = _build_extraction_system_prompt(good_with, bad_with, breeds_for_prompt)
 
     if backend == "groq":
         from .enrichment.groq_client import GroqError, groq_extract_filters
@@ -1046,8 +1092,9 @@ def _extract_filters(query: str) -> tuple[dict, str]:
         except GroqError as exc:
             if get_fallback_enabled() and _state.search_model_ok:
                 logger.warning(f"Groq extraction failed, falling back to Mistral: {exc}")
-                # Mistral fallback: rebuild prompt without the breed hint to
-                # respect Mistral's prompt-size constraint.
+                # Mistral fallback: rebuild prompt without the breed list
+                # to respect Mistral's prompt-size constraint. The validator
+                # still runs against the full `breed_allowed` set below.
                 mistral_prompt = _build_extraction_system_prompt(good_with, bad_with, [])
                 raw_filters, raw_output = _extract_filters_mistral(query, mistral_prompt)
             else:
@@ -1071,7 +1118,12 @@ def _extract_filters(query: str) -> tuple[dict, str]:
     else:
         raw_filters, raw_output = _extract_filters_mistral(query, system_prompt)
 
-    cleaned = _postprocess_filters(raw_filters, set(good_with), set(bad_with))
+    # Validator always gates on the full allowed-list regardless of
+    # backend — even when the prompt was lean, the LLM's output gets
+    # gated against breeds that actually exist in the DB.
+    cleaned = _postprocess_filters(
+        raw_filters, set(good_with), set(bad_with), set(breed_allowed)
+    )
     return cleaned, raw_output
 
 
@@ -1150,10 +1202,10 @@ class SearchResponse(BaseModel):
 @app.post("/api/dogs/search", response_model=SearchResponse)
 def search_dogs(req: SearchRequest):
     """Natural language search: extract filters via LLM then query the DB."""
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
     from sqlalchemy.orm import selectinload
 
-    from .database.models import Dog
+    from .database.models import Dog, InferredDogBreed
     from .enrichment.normalizers import normalize_age, normalize_weight
 
     backend = get_search_backend()
@@ -1190,8 +1242,29 @@ def search_dogs(req: SearchRequest):
             q = q.where(_eq_resolved(Dog.gender_en, Dog.gender_from_desc, gender))
         if size := extracted.get("size"):
             q = q.where(_eq_resolved(Dog.size_en, Dog.size_from_desc, size))
-        if breed := extracted.get("breed"):
-            q = q.where(_ilike_resolved(Dog.breed_en, Dog.breed_from_desc, f"%{breed}%"))
+        breeds = extracted.get("breed")
+        if breeds:
+            # `extracted["breed"]` is a list of candidates the LLM nominated
+            # from the allowed list (str input tolerated for safety). Each
+            # candidate fires two branches; the union is OR'd:
+            #  - claimed columns (breed_en / breed_from_desc) via substring
+            #    (so a candidate "Labrador" matches "Labrador mix")
+            #  - InferredDogBreed.value for method='image' via exact match
+            #    (AI-detected, canonical AKC, same source that fed the prompt)
+            if isinstance(breeds, str):
+                breeds = [breeds]
+            breed_clauses = [
+                or_(
+                    _ilike_resolved(Dog.breed_en, Dog.breed_from_desc, f"%{b}%"),
+                    select(InferredDogBreed.id).where(
+                        InferredDogBreed.dog_id == Dog.id,
+                        InferredDogBreed.value == b,
+                        InferredDogBreed.method == "image",
+                    ).exists(),
+                )
+                for b in breeds
+            ]
+            q = q.where(or_(*breed_clauses))
         if fur := extracted.get("fur"):
             q = q.where(_eq_resolved(Dog.fur_en, Dog.fur_from_desc, fur))
         # good_with / bad_with may be lists or strings — AND condition for each value
