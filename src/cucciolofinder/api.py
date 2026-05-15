@@ -22,7 +22,6 @@ from .enrichment.backends import (
     any_backend_uses_mistral,
     any_backend_uses_openrouter,
     get_extract_backend,
-    get_fallback_enabled,
     get_search_backend,
     get_translation_backend,
     validate_backend_config,
@@ -1120,38 +1119,7 @@ def _extract_filters(query: str) -> tuple[dict, str]:
 
     system_prompt = _build_extraction_system_prompt(good_with, bad_with, breeds_for_prompt)
 
-    if backend == "groq":
-        from .enrichment.groq_client import GroqError, groq_extract_filters
-        try:
-            raw_filters, raw_output = groq_extract_filters(query, system_prompt)
-        except GroqError as exc:
-            if get_fallback_enabled() and _state.search_model_ok:
-                logger.warning(f"Groq extraction failed, falling back to Mistral: {exc}")
-                # Mistral fallback: rebuild prompt without the breed list
-                # to respect Mistral's prompt-size constraint. The validator
-                # still runs against the full `breed_allowed` set below.
-                mistral_prompt = _build_extraction_system_prompt(good_with, bad_with, [])
-                raw_filters, raw_output = _extract_filters_mistral(query, mistral_prompt)
-            else:
-                raise
-    elif backend == "openrouter":
-        from .enrichment.openrouter_client import (
-            OpenRouterError,
-            openrouter_extract_filters,
-        )
-        try:
-            raw_filters, raw_output = openrouter_extract_filters(query, system_prompt)
-        except OpenRouterError as exc:
-            if get_fallback_enabled() and _state.search_model_ok:
-                logger.warning(
-                    f"OpenRouter extraction failed, falling back to Mistral: {exc}"
-                )
-                mistral_prompt = _build_extraction_system_prompt(good_with, bad_with, [])
-                raw_filters, raw_output = _extract_filters_mistral(query, mistral_prompt)
-            else:
-                raise
-    else:
-        raw_filters, raw_output = _extract_filters_mistral(query, system_prompt)
+    raw_filters, raw_output = _dispatch_extraction(query, backend, system_prompt)
 
     # Validator always gates on the full allowed-list regardless of
     # backend — even when the prompt was lean, the LLM's output gets
@@ -1160,6 +1128,63 @@ def _extract_filters(query: str) -> tuple[dict, str]:
         raw_filters, set(good_with), set(bad_with), set(breed_allowed)
     )
     return cleaned, raw_output
+
+
+def _dispatch_extraction(
+    query: str,
+    backend: str,
+    system_prompt: str,
+) -> tuple[dict, str]:
+    """Run extraction through the configured backend, with cross-provider
+    fallback when the primary returns nothing usable.
+
+    For remote backends (groq / openrouter), if the primary raises OR
+    returns empty raw content, try the *other* remote provider.
+    Empty raw output is distinct from a parseable `{}` — Llama 3.3 70B
+    in JSON mode occasionally drops out for specific phrasings (e.g.
+    "<breed>-type dog, good with people"). The other provider's
+    inference stack is unlikely to share the exact quirk.
+
+    Both providers exhausted → re-raise the last exception, or return
+    `({}, "")` if neither raised (both genuinely empty).
+    """
+    from .enrichment.groq_client import GroqError, groq_extract_filters
+    from .enrichment.openrouter_client import (
+        OpenRouterError,
+        openrouter_extract_filters,
+    )
+
+    if backend == "mistral":
+        return _extract_filters_mistral(query, system_prompt)
+
+    if backend == "groq":
+        primary = ("Groq", groq_extract_filters, GroqError)
+        secondary = ("OpenRouter", openrouter_extract_filters, OpenRouterError)
+    else:  # openrouter
+        primary = ("OpenRouter", openrouter_extract_filters, OpenRouterError)
+        secondary = ("Groq", groq_extract_filters, GroqError)
+
+    last_exc: Exception | None = None
+    for tier, (name, fn, exc_class) in enumerate((primary, secondary)):
+        try:
+            raw_filters, raw_output = fn(query, system_prompt)
+        except exc_class as exc:
+            logger.warning(f"{name} extraction raised: {exc}")
+            last_exc = exc
+            continue
+        if not raw_output.strip():
+            logger.warning(
+                f"{name} returned empty content for query={query!r}; trying next tier"
+            )
+            continue
+        if tier > 0:
+            logger.info(f"Cross-provider fallback succeeded via {name}")
+        return raw_filters, raw_output
+
+    if last_exc is not None:
+        raise last_exc
+    logger.warning("Both providers returned empty; surfacing empty filters")
+    return {}, ""
 
 
 class SearchRequest(BaseModel):
