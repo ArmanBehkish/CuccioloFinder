@@ -95,7 +95,6 @@
   font-size: 0.8rem;
   font-weight: 500;
   border: 1px solid var(--card-border) !important;
-  text-transform: capitalize;
 }
 
 .smart-search-empty-hint {
@@ -113,27 +112,4 @@
 
 .smart-search-empty-hint a:hover {
   text-decoration: underline;
-}
-
-/* TEMPORARY — remove after testing */
-.debug-raw-output {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-  font-size: 0.82rem;
-}
-
-.debug-raw-output strong {
-  color: #f09848;
-  display: block;
-  margin-bottom: 0.3rem;
-}
-
-.debug-raw-output pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: #d4d4d4;
 }

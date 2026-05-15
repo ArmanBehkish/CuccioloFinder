@@ -13,13 +13,29 @@ import { useSmartSearch } from '../../hooks/useSmartSearch';
 import { getWorkerStatus } from '../../api/dogs';
 import { RiMagicFill } from 'react-icons/ri';
 import { PiInfoBold } from 'react-icons/pi';
+import InfoTip from '../common/InfoTip';
 import './NaturalSearchPage.css';
 
 const EXAMPLES = [
-  'Small female puppy, good with children',
-  'Large dog with short fur, not good with cats',
-  'Senior medium dog, any breed',
+  'Shepherd, good with elderly',
+  'Medium-sized pit bull',
+  'Big female dog, good with cats',
+  'A Rottweiler-type dog, good with people',
 ];
+
+function sentenceCase(s) {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Strings carrying intentional casing (breed names, multi-word tags from
+// the DB) keep their casing verbatim. Pure-lowercase enum values
+// (validator-normalised: "small", "male", …) get a sentence-case bump.
+function displayValue(v) {
+  if (typeof v !== 'string') return String(v);
+  if (/[A-Z]/.test(v)) return v;
+  return sentenceCase(v);
+}
 
 function ExtractedFiltersDisplay({ filters }) {
   const entries = Object.entries(filters);
@@ -51,7 +67,7 @@ function ExtractedFiltersDisplay({ filters }) {
       <div className="extracted-filters-badges">
         {badges.map((b, i) => (
           <Badge key={i} bg="light" text="dark" className="extracted-filter-badge">
-            {b.label}: {b.value}
+            {sentenceCase(b.label)}: {displayValue(b.value)}
           </Badge>
         ))}
       </div>
@@ -94,7 +110,12 @@ function NaturalSearchPage() {
   return (
     <div>
       <div className="page-header">
-        <h2>Smart Search</h2>
+        <h2>
+          Smart Search
+          <InfoTip id="smart-search-page-tip" placement="bottom">
+            The AI extracts size, breed, age, gender, fur, weight, and compatibility from your description.
+          </InfoTip>
+        </h2>
       </div>
 
       {workerBusy && (
@@ -160,23 +181,9 @@ function NaturalSearchPage() {
         ))}
       </div>
 
-      {/* Info note */}
-      <div className="filter-note">
-        <PiInfoBold className="filter-note-icon" />
-        <span>The AI extracts size, breed, age, gender, fur, weight, and compatibility from your description.</span>
-      </div>
-
       {/* All results hidden when worker is busy to avoid API calls */}
       {!workerBusy && (
         <>
-          {/* TEMPORARY debug: raw model output */}
-          {results && (
-            <div className="debug-raw-output">
-              <strong>Raw model output:</strong>
-              <pre>{results.raw_model_output}</pre>
-            </div>
-          )}
-
           {/* Extracted filters */}
           {results && <ExtractedFiltersDisplay filters={results.extracted_filters} />}
 
