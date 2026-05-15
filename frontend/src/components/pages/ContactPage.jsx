@@ -230,7 +230,7 @@ function ContactPage() {
               <h5>Support the Project</h5>
             </div>
             <p className="contact-card-text">
-              CuccioloFinder is a passion project built in free time and out of love for shelter dogs. It is not intended as a business or a source of income. However, keeping a web server running with the resources needed to power the AI models / LLM APIs, along with the time spent updating and maintaining the code, does come at a cost. Small donations help keep this project going and are greatly appreciated.
+              CuccioloFinder is a passion project built in free time and out of love for shelter dogs. It is not intended as a business or a source of income. However, keeping a web server running with the resources needed to power the AI models / LLM APIs, along with the time spent updating and maintaining the code, does come at a cost. Small tips help keep this project going and are greatly appreciated.
             </p>
             <div className="donate-buttons">
               <a href="https://ko-fi.com/cucciolofinder" className="donate-link" target="_blank" rel="noopener noreferrer">Buy Me a Coffee</a>
