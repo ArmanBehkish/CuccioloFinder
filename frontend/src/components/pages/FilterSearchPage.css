@@ -28,6 +28,38 @@
   box-shadow: 0 0 0 0.2rem rgba(184, 134, 78, 0.2);
 }
 
+/* Each section is its own bordered box (fieldset-style). The title sits
+ * over the top border on the left, with the panel's background "punching
+ * through" the border-gap behind it — that's why the label background
+ * has to match the surrounding `.filter-panel` colour. */
+.filter-section {
+  position: relative;
+  border: 1px solid #aaaaaa;
+  border-radius: 10px;
+  padding: 1.1rem 1rem 0.85rem;
+  margin-bottom: 1rem;
+  background: transparent;
+}
+
+.filter-section:last-of-type {
+  margin-bottom: 0;
+}
+
+.filter-section-label {
+  position: absolute;
+  top: -0.6em;
+  left: 1rem;
+  padding: 0 0.5rem;
+  background: #f0e9df; /* must match `.filter-panel` background */
+  color: #000000;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  user-select: none;
+  line-height: 1;
+}
+
 .filter-note {
   display: flex;
   align-items: center;

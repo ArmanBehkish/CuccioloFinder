@@ -248,11 +248,13 @@ function ContactPage() {
               <li><LuStar className="contact-list-icon" /> Visit and support the partner shelters</li>
               <li><LuStar className="contact-list-icon" /> Foster or adopt a dog</li>
               <li>
-                <LuStar className="contact-list-icon" />{' '}
-                Suggest improvements or report issues via the form or{' '}
-                <a href="https://github.com/ArmanBehkish/CuccioloFinder/issues" target="_blank" rel="noopener noreferrer">
-                  GitHub issues
-                </a>
+                <LuStar className="contact-list-icon" />
+                <span>
+                  Suggest improvements or report issues via the form or{' '}
+                  <a href="https://github.com/ArmanBehkish/CuccioloFinder/issues" target="_blank" rel="noopener noreferrer">
+                    GitHub issues
+                  </a>
+                </span>
               </li>
             </ul>
           </div>

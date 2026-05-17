@@ -94,7 +94,7 @@ function HomePage() {
        * full donate context + Ko-fi button live. */}
       <Link to="/contact" className="home-donate-banner">
         <PiHeartFill className="home-donate-banner-icon" />
-        <span>If you find CuccioloFinder useful, consider buying me a coffee →</span>
+        <span>If you find CuccioloFinder useful, consider buying me a coffee</span>
       </Link>
     </div>
   );

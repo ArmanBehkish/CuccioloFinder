@@ -104,7 +104,7 @@ function FilterSearchPage() {
         <h2>
           Search & Filter
           <InfoTip id="filter-page-tip" placement="bottom">
-            Not all fields are available for every dog. Leave filters empty to see all dogs, or choose only the shelter to see all dogs there. Reset for a new search.
+            Not all fields are available for every dog. Every selection narrows the search further, so click Reset before trying a new combination instead of carrying over the previous one.
           </InfoTip>
         </h2>
       </div>
@@ -117,229 +117,251 @@ function FilterSearchPage() {
 
       {/* Filter panel */}
       <div className="filter-panel" onKeyDown={handleKeyDown}>
-        {/* Row 1 */}
-        <Row className="g-2 mb-2">
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Shelter"
-              value={filters.source_site}
-              options={enums?.source_site || []}
-              onChange={(v) => updateFilter('source_site', v)}
-            />
-          </Col>
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Gender"
-              value={filters.gender}
-              options={enums?.gender_en || []}
-              onChange={(v) => updateFilter('gender', v)}
-            />
-          </Col>
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Size"
-              value={filters.size}
-              options={enums?.size_en || []}
-              onChange={(v) => updateFilter('size', v)}
-            />
-          </Col>
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Age"
-              value={filters.age}
-              options={enums?.age_category || []}
-              onChange={(v) => updateFilter('age', v)}
-            />
-          </Col>
-        </Row>
-
-        {/* Row 2 — breed pair (claimed vs AI-detected) + fur/weight */}
-        <Row className="g-2 mb-2">
-          <Col xs={6} md={3}>
-            <Form.Group>
-              <Form.Label className="small text-muted mb-1">
-                Claimed Breed
-                <InfoTip id="filter-breed-claimed-tip">
-                  Breed explicitly announced by the shelter — either in a breed field or in the description.
-                </InfoTip>
-              </Form.Label>
-              <Typeahead
-                ref={breedClaimedRef}
-                id="breed-claimed-typeahead"
-                size="sm"
-                options={enums?.breed_claimed || []}
-                placeholder="Start typing..."
-                defaultInputValue={filters.breed_claimed || ''}
-                onChange={(selected) => updateFilter('breed_claimed', selected[0] || '')}
-                onInputChange={(text) => updateFilter('breed_claimed', text)}
-                minLength={1}
+        {/* Section: Profile (Shelter, Gender, Age) */}
+        <div className="filter-section">
+          <div className="filter-section-label">Profile</div>
+          <Row className="g-2">
+            <Col xs={12} md={4}>
+              <FilterDropdown
+                label="Shelter"
+                value={filters.source_site}
+                options={enums?.source_site || []}
+                onChange={(v) => updateFilter('source_site', v)}
               />
-            </Form.Group>
-          </Col>
-          <Col xs={6} md={3}>
-            <Form.Group>
-              <Form.Label className="small text-muted mb-1">
-                Detected Breed
-                <InfoTip id="filter-breed-detected-tip">
-                  Breed detected by AI from the dog's photos or behaviours, when there's enough information to make a guess.
-                </InfoTip>
-              </Form.Label>
-              <Typeahead
-                ref={breedDetectedRef}
-                id="breed-detected-typeahead"
-                size="sm"
-                options={enums?.breed_detected || []}
-                placeholder="Start typing..."
-                defaultInputValue={filters.breed_detected || ''}
-                onChange={(selected) => updateFilter('breed_detected', selected[0] || '')}
-                onInputChange={(text) => updateFilter('breed_detected', text)}
-                minLength={1}
+            </Col>
+            <Col xs={12} md={4}>
+              <FilterDropdown
+                label="Gender"
+                value={filters.gender}
+                options={enums?.gender_en || []}
+                onChange={(v) => updateFilter('gender', v)}
               />
-            </Form.Group>
-          </Col>
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Fur"
-              value={filters.fur}
-              options={enums?.fur_en || []}
-              onChange={(v) => updateFilter('fur', v)}
-            />
-          </Col>
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Weight"
-              value={filters.weight}
-              options={enums?.weight || []}
-              onChange={(v) => updateFilter('weight', v)}
-            />
-          </Col>
-        </Row>
+            </Col>
+            <Col xs={12} md={4}>
+              <FilterDropdown
+                label="Age"
+                value={filters.age}
+                options={enums?.age_category || []}
+                onChange={(v) => updateFilter('age', v)}
+              />
+            </Col>
+          </Row>
+        </div>
 
-        {/* Row 3 — medical block (microchip, sterilization, vaccine, deworming) */}
-        <Row className="g-2 mb-2">
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Microchip"
-              value={filters.microchip}
-              options={enums?.microchip_en || []}
-              onChange={(v) => updateFilter('microchip', v)}
-            />
-          </Col>
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Sterilization"
-              value={filters.sterilization}
-              options={enums?.sterilization_en || []}
-              onChange={(v) => updateFilter('sterilization', v)}
-            />
-          </Col>
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Vaccine"
-              value={filters.vaccine}
-              options={enums?.vaccine_en || []}
-              onChange={(v) => updateFilter('vaccine', v)}
-            />
-          </Col>
-          <Col xs={6} md={3}>
-            <FilterDropdown
-              label="Deworming"
-              value={filters.deworming}
-              options={enums?.deworming_en || []}
-              onChange={(v) => updateFilter('deworming', v)}
-            />
-          </Col>
-        </Row>
+        {/* Section: Body (Size, Fur, Weight) */}
+        <div className="filter-section">
+          <div className="filter-section-label">Body</div>
+          <Row className="g-2">
+            <Col xs={12} md={4}>
+              <FilterDropdown
+                label="Size"
+                value={filters.size}
+                options={enums?.size_en || []}
+                onChange={(v) => updateFilter('size', v)}
+              />
+            </Col>
+            <Col xs={12} md={4}>
+              <FilterDropdown
+                label="Fur"
+                value={filters.fur}
+                options={enums?.fur_en || []}
+                onChange={(v) => updateFilter('fur', v)}
+              />
+            </Col>
+            <Col xs={12} md={4}>
+              <FilterDropdown
+                label="Weight"
+                value={filters.weight}
+                options={enums?.weight || []}
+                onChange={(v) => updateFilter('weight', v)}
+              />
+            </Col>
+          </Row>
+        </div>
 
-        {/* Row 4 — compatibility pair (wider columns, just two items) */}
-        <Row className="g-2 mb-2">
-          <Col xs={12} md={6}>
-            <FilterDropdown
-              label="Good With"
-              value={filters.good_with}
-              options={enums?.good_with_en || []}
-              onChange={(v) => updateFilter('good_with', v)}
-            />
-          </Col>
-          <Col xs={12} md={6}>
-            <FilterDropdown
-              label="Bad With"
-              value={filters.bad_with}
-              options={enums?.bad_with_en || []}
-              onChange={(v) => updateFilter('bad_with', v)}
-            />
-          </Col>
-        </Row>
+        {/* Section: Breed (Claimed vs AI-detected) */}
+        <div className="filter-section">
+          <div className="filter-section-label">Breed</div>
+          <Row className="g-2">
+            <Col xs={12} md={6}>
+              <Form.Group>
+                <Form.Label className="small text-muted mb-1">
+                  Claimed Breed
+                  <InfoTip id="filter-breed-claimed-tip">
+                    Breed explicitly announced by the shelter — either in a breed field or in the description.
+                  </InfoTip>
+                </Form.Label>
+                <Typeahead
+                  ref={breedClaimedRef}
+                  id="breed-claimed-typeahead"
+                  size="sm"
+                  options={enums?.breed_claimed || []}
+                  placeholder="Start typing..."
+                  defaultInputValue={filters.breed_claimed || ''}
+                  onChange={(selected) => updateFilter('breed_claimed', selected[0] || '')}
+                  onInputChange={(text) => updateFilter('breed_claimed', text)}
+                  minLength={1}
+                />
+              </Form.Group>
+            </Col>
+            <Col xs={12} md={6}>
+              <Form.Group>
+                <Form.Label className="small text-muted mb-1">
+                  Detected Breed
+                  <InfoTip id="filter-breed-detected-tip">
+                    Breed detected by AI from the dog's photos or behaviours, when there's enough information to make a guess.
+                  </InfoTip>
+                </Form.Label>
+                <Typeahead
+                  ref={breedDetectedRef}
+                  id="breed-detected-typeahead"
+                  size="sm"
+                  options={enums?.breed_detected || []}
+                  placeholder="Start typing..."
+                  defaultInputValue={filters.breed_detected || ''}
+                  onChange={(selected) => updateFilter('breed_detected', selected[0] || '')}
+                  onInputChange={(text) => updateFilter('breed_detected', text)}
+                  minLength={1}
+                />
+              </Form.Group>
+            </Col>
+          </Row>
+        </div>
 
-        {/* Row 5 — date filters (3 evenly-spaced columns) */}
-        <Row className="g-2 mb-2">
-          <Col xs={12} md={4}>
-            <Form.Group>
-              <Form.Label className="small text-muted mb-1">
-                Extracted At
-                <InfoTip id="filter-extracted-tip">
-                  When the dog first appeared in our database. Works for all shelters.
-                </InfoTip>
-              </Form.Label>
-              <Form.Select
-                size="sm"
-                value={filters.extracted_interval}
-                onChange={(e) => updateFilter('extracted_interval', e.target.value)}
-              >
-                <option value="">All</option>
-                {SCRAPED_INTERVALS.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-          </Col>
-          <Col xs={12} md={4}>
-            <Form.Group>
-              <Form.Label className="small text-muted mb-1">
-                Posted on Shelter Website
-                <InfoTip id="filter-posted-tip">
-                  Only available for: {postDateShelters.length ? postDateShelters.join(', ') : 'no shelters yet'}.
-                </InfoTip>
-              </Form.Label>
-              <Form.Select
-                size="sm"
-                value={filters.posted_interval}
-                onChange={(e) => updateFilter('posted_interval', e.target.value)}
-                disabled={!postedFilterEnabled}
-                title={postedFilterEnabled ? undefined
-                  : 'Not available for this shelter — pick a shelter that posts listing dates.'}
-              >
-                <option value="">All</option>
-                {TIME_INTERVALS.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-          </Col>
-          <Col xs={12} md={4}>
-            <Form.Group>
-              <Form.Label className="small text-muted mb-1">
-                In Shelter Since
-                <InfoTip id="filter-shelter-since-tip">
-                  Only available for: {shelterSinceShelters.length ? shelterSinceShelters.join(', ') : 'no shelters yet'}.
-                </InfoTip>
-              </Form.Label>
-              <Form.Select
-                size="sm"
-                value={filters.shelter_interval}
-                onChange={(e) => updateFilter('shelter_interval', e.target.value)}
-                disabled={!shelterSinceFilterEnabled}
-                title={shelterSinceFilterEnabled ? undefined
-                  : 'Not available for this shelter — pick a shelter that reports intake dates.'}
-              >
-                <option value="">All</option>
-                {TIME_INTERVALS.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-          </Col>
-        </Row>
+        {/* Section: Medical */}
+        <div className="filter-section">
+          <div className="filter-section-label">Medical</div>
+          <Row className="g-2">
+            <Col xs={6} md={3}>
+              <FilterDropdown
+                label="Microchip"
+                value={filters.microchip}
+                options={enums?.microchip_en || []}
+                onChange={(v) => updateFilter('microchip', v)}
+              />
+            </Col>
+            <Col xs={6} md={3}>
+              <FilterDropdown
+                label="Sterilization"
+                value={filters.sterilization}
+                options={enums?.sterilization_en || []}
+                onChange={(v) => updateFilter('sterilization', v)}
+              />
+            </Col>
+            <Col xs={6} md={3}>
+              <FilterDropdown
+                label="Vaccine"
+                value={filters.vaccine}
+                options={enums?.vaccine_en || []}
+                onChange={(v) => updateFilter('vaccine', v)}
+              />
+            </Col>
+            <Col xs={6} md={3}>
+              <FilterDropdown
+                label="Deworming"
+                value={filters.deworming}
+                options={enums?.deworming_en || []}
+                onChange={(v) => updateFilter('deworming', v)}
+              />
+            </Col>
+          </Row>
+        </div>
+
+        {/* Section: Compatibility */}
+        <div className="filter-section">
+          <div className="filter-section-label">Compatibility</div>
+          <Row className="g-2">
+            <Col xs={12} md={6}>
+              <FilterDropdown
+                label="Good With"
+                value={filters.good_with}
+                options={enums?.good_with_en || []}
+                onChange={(v) => updateFilter('good_with', v)}
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <FilterDropdown
+                label="Bad With"
+                value={filters.bad_with}
+                options={enums?.bad_with_en || []}
+                onChange={(v) => updateFilter('bad_with', v)}
+              />
+            </Col>
+          </Row>
+        </div>
+
+        {/* Section: Dates */}
+        <div className="filter-section">
+          <div className="filter-section-label">Dates</div>
+          <Row className="g-2">
+            <Col xs={12} md={4}>
+              <Form.Group>
+                <Form.Label className="small text-muted mb-1">
+                  Extracted At
+                  <InfoTip id="filter-extracted-tip">
+                    When the dog first appeared in our database. Works for all shelters.
+                  </InfoTip>
+                </Form.Label>
+                <Form.Select
+                  size="sm"
+                  value={filters.extracted_interval}
+                  onChange={(e) => updateFilter('extracted_interval', e.target.value)}
+                >
+                  <option value="">All</option>
+                  {SCRAPED_INTERVALS.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </Form.Select>
+              </Form.Group>
+            </Col>
+            <Col xs={12} md={4}>
+              <Form.Group>
+                <Form.Label className="small text-muted mb-1">
+                  Posted on Shelter Website
+                  <InfoTip id="filter-posted-tip">
+                    Only available for: {postDateShelters.length ? postDateShelters.join(', ') : 'no shelters yet'}.
+                  </InfoTip>
+                </Form.Label>
+                <Form.Select
+                  size="sm"
+                  value={filters.posted_interval}
+                  onChange={(e) => updateFilter('posted_interval', e.target.value)}
+                  disabled={!postedFilterEnabled}
+                  title={postedFilterEnabled ? undefined
+                    : 'Not available for this shelter — pick a shelter that posts listing dates.'}
+                >
+                  <option value="">All</option>
+                  {TIME_INTERVALS.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </Form.Select>
+              </Form.Group>
+            </Col>
+            <Col xs={12} md={4}>
+              <Form.Group>
+                <Form.Label className="small text-muted mb-1">
+                  In Shelter Since
+                  <InfoTip id="filter-shelter-since-tip">
+                    Only available for: {shelterSinceShelters.length ? shelterSinceShelters.join(', ') : 'no shelters yet'}.
+                  </InfoTip>
+                </Form.Label>
+                <Form.Select
+                  size="sm"
+                  value={filters.shelter_interval}
+                  onChange={(e) => updateFilter('shelter_interval', e.target.value)}
+                  disabled={!shelterSinceFilterEnabled}
+                  title={shelterSinceFilterEnabled ? undefined
+                    : 'Not available for this shelter — pick a shelter that reports intake dates.'}
+                >
+                  <option value="">All</option>
+                  {TIME_INTERVALS.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </Form.Select>
+              </Form.Group>
+            </Col>
+          </Row>
+        </div>
 
         {/* Row 6 — actions */}
         <div className="filter-actions">

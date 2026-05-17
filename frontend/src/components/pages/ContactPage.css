@@ -151,6 +151,12 @@
   line-height: 1.5;
 }
 
+/* Keep inline links like "GitHub issues" together when the column gets narrow
+ * — wrap the whole link to the next line instead of breaking it mid-phrase. */
+.contact-list a {
+  white-space: nowrap;
+}
+
 .contact-list-icon {
   font-size: 0.85rem;
   color: #f09848;
