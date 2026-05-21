@@ -80,6 +80,7 @@ Thumbs.db
 # Project specific
 site/
 docs/
+Documents/
 data/
 logs/
 scripts/

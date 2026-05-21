@@ -1,6 +1,12 @@
 # CuccioloFinder
 
-<!-- §1 (hero) — to be written last -->
+*Find a puppy you love.*
+
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE) [![Live site](https://img.shields.io/badge/Live%20site-armanb.dev%2Fcucciolofinder-f09848)](https://armanb.dev/cucciolofinder)
+
+Aggregating adoptable dogs from Italian shelters, translated into English with AI-powered breed estimates.
+
+![CuccioloFinder homepage with looped video of shelter dogs](docs/screenshots/hero.png)
 
 ## What it is
 
@@ -27,6 +33,14 @@ aggregated statistics over the whole dataset: what each shelter covers, how
 breeds and ages are distributed, how long dogs tend to wait for adoption,
 and where the data is incomplete. Every dog links back to its original
 shelter. Adoptions happen there, not here.
+
+## See it live
+
+Live at **[armanb.dev/cucciolofinder](https://armanb.dev/cucciolofinder)**.
+
+![Smart search page — describe a dog in plain English, see the filters the AI extracted](docs/screenshots/smart.png)
+
+![Statistics dashboard — six tabs of analytics rendered client-side from a single API call](docs/screenshots/stats.png)
 
 ## What you can do
 
@@ -329,8 +343,3 @@ one failed attempt. The ones worth recording:
 - **Author:** Arman Behkish
 - **License:** AGPL-3.0
 - **Support running costs:** [ko-fi.com/cucciolofinder](https://ko-fi.com/cucciolofinder)
-
-<!-- remaining sections to be added as we approve them:
-     §3 See it live (screenshots)
-     §1 Hero (tagline + badges)
--->
