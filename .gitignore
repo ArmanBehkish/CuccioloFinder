@@ -83,6 +83,8 @@ Documents/
 data/
 logs/
 scripts/
+Artifacts/
+Email/
 *.pem
 *.key
 
