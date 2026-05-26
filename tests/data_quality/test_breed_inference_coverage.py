@@ -10,15 +10,13 @@ import pytest
 from loguru import logger
 from sqlalchemy import func
 
+from cucciolofinder.config import DISABLED_SHELTERS
 from cucciolofinder.database import Dog, InferredDogBreed
+from cucciolofinder.scrapers.pipelines import SPIDER_SOURCE_MAP
 
-EXPECTED_SOURCES = [
-    "quattrozampe",
-    "empethy",
-    "alberodimais",
-    "enpatorino",
-    "canileoasi",
-]
+# Derived from the spider→source_site mapping minus anything disabled in
+# config.py. Auto-adapts when a shelter is toggled — no manual list edits.
+EXPECTED_SOURCES = sorted(set(SPIDER_SOURCE_MAP.values()) - set(DISABLED_SHELTERS))
 
 
 @pytest.fixture(scope="session")

@@ -77,12 +77,14 @@ function HomePage() {
       <section className="home-section">
         <h2>Our Shelter Partners</h2>
         <p>
-          We collect data from 5 shelters and rescue organizations in the
+          We collect data from 4 shelters and rescue organizations in the
           Torino area, updated every 12 hours:
         </p>
         <ul className="shelter-list">
           <li><a href="https://www.quattrozampeinfamiglia.it" target="_blank" rel="noopener noreferrer">Quattro Zampe in Famiglia</a></li>
-          <li><a href="https://alberodimais.it" target="_blank" rel="noopener noreferrer">Albero di Mais</a></li>
+          {/* Hidden per shelter request — paired with DISABLED_SHELTERS in src/cucciolofinder/config.py.
+              <li><a href="https://alberodimais.it" target="_blank" rel="noopener noreferrer">Albero di Mais</a></li>
+          */}
           <li><a href="https://www.empethy.it/organizzazioni/rifugio-impronta-creativa-torino" target="_blank" rel="noopener noreferrer">Empethy &mdash; Rifugio Impronta Creativa Torino</a></li>
           <li><a href="https://www.voltoweb.it/enpasezionetorino/" target="_blank" rel="noopener noreferrer">ENPA Sezione Torino</a></li>
           <li><a href="https://canileoasi.it" target="_blank" rel="noopener noreferrer">Canile Oasi</a></li>

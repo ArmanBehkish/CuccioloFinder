@@ -12,7 +12,8 @@ import './ContactPage.css';
 
 const SHELTERS = [
   { name: 'Quattro Zampe in Famiglia', url: 'https://www.quattrozampeinfamiglia.it' },
-  { name: 'Albero di Mais', url: 'https://alberodimais.it' },
+  // Hidden per shelter request — paired with DISABLED_SHELTERS in src/cucciolofinder/config.py.
+  // { name: 'Albero di Mais', url: 'https://alberodimais.it' },
   { name: 'Empethy — Rifugio Impronta Creativa Torino', url: 'https://www.empethy.it/organizzazioni/rifugio-impronta-creativa-torino' },
   { name: 'ENPA Sezione Torino', url: 'https://www.voltoweb.it/enpasezionetorino/' },
   { name: 'Canile Oasi', url: 'https://canileoasi.it' },

@@ -4,6 +4,7 @@ from loguru import logger
 
 load_dotenv()
 
+from cucciolofinder.config import DISABLED_SHELTERS
 from cucciolofinder.database import get_engine, get_session, init_db
 from cucciolofinder.enrichment import (
     enrich_behavior_from_desc,
@@ -88,14 +89,24 @@ if __name__ == "__main__":
     engine = get_engine()
     init_db(engine)
 
-    # Step 1: Scrape all sources
+    # Step 1: Scrape all sources (skipping any listed in DISABLED_SHELTERS)
     logger.info("Starting scraping...")
     process = CrawlerProcess()
-    process.crawl(QuattroZampeSpider)
-    process.crawl(EmpethySpider)
-    process.crawl(AlberoDiMaisSpider)
-    process.crawl(EnpaTorinoSpider)
-    process.crawl(CanileOasiSpider)
+    # Each entry pairs a spider class with the source_site value its items
+    # land under in the DB (see SPIDER_SOURCE_MAP in scrapers/pipelines.py).
+    # DISABLED_SHELTERS uses these same source_site values.
+    _SPIDERS = [
+        (QuattroZampeSpider, "quattrozampe"),
+        (EmpethySpider, "empethy"),
+        (AlberoDiMaisSpider, "alberodimais"),
+        (EnpaTorinoSpider, "enpatorino"),
+        (CanileOasiSpider, "canileoasi"),
+    ]
+    for cls, key in _SPIDERS:
+        if key in DISABLED_SHELTERS:
+            logger.info(f"Skipping {key} — listed in DISABLED_SHELTERS")
+            continue
+        process.crawl(cls)
     process.start()
 
     # Step 2: Enrich translations (Stage 1)

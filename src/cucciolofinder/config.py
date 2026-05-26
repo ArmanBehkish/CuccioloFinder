@@ -13,6 +13,13 @@ SHELTER_SITES: dict[str, ShelterSite] = {
     "canileoasi":ShelterSite(url="https://canileoasi.it/adozioni/"),
 }
 
+# Shelter source_site values (the strings stored in `Dog.source_site`, see
+# SPIDER_SOURCE_MAP in scrapers/pipelines.py) whose data is hidden from
+# public APIs and not re-scraped. Existing DB rows stay untouched; they're
+# excluded from /api/enums, /api/stats, /api/filter-dogs, /api/dogs/{id},
+# /api/dogs/search, and the data-quality tests' EXPECTED_SOURCES.
+DISABLED_SHELTERS: list[str] = ["alberodimais"]
+
 # Quick-test scrape limit.
 # Integer for limited number
 # None for Production

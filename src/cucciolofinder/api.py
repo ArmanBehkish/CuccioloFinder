@@ -14,8 +14,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from sqlalchemy import Engine, text
 
+from .config import DISABLED_SHELTERS
 from .database.db import DEFAULT_DB_PATH, get_engine, get_session
 from .database.models import DogImage
+
+
+def _active_dog_clauses():
+    """SQLAlchemy WHERE clauses for dogs that should appear in public outputs:
+    not superseded by a newer scrape, and not from a shelter listed in
+    DISABLED_SHELTERS. Spread with `.where(*_active_dog_clauses(), ...)`."""
+    from .database.models import Dog
+    clauses = [Dog.superseded_at.is_(None)]
+    if DISABLED_SHELTERS:
+        clauses.append(~Dog.source_site.in_(DISABLED_SHELTERS))
+    return clauses
 from .enrichment.backends import (
     BackendConfigError,
     any_backend_uses_groq,
@@ -214,7 +226,7 @@ def _reload_caches() -> int:
         def distinct_non_null(col):
             rows = session.execute(
                 select(distinct(col))
-                .where(col.isnot(None), Dog.superseded_at.is_(None))
+                .where(col.isnot(None), *_active_dog_clauses())
                 .order_by(col)
             ).scalars().all()
             return [r for r in rows if r]
@@ -232,7 +244,7 @@ def _reload_caches() -> int:
         for col in (Dog.breed_en, Dog.breed_from_desc):
             for (val,) in session.execute(
                 select(col).where(
-                    col.isnot(None), col != "", Dog.superseded_at.is_(None)
+                    col.isnot(None), col != "", *_active_dog_clauses()
                 ).distinct()
             ).all():
                 if val and val.strip():
@@ -249,7 +261,7 @@ def _reload_caches() -> int:
                 select(InferredDogBreed.value)
                 .join(Dog, Dog.id == InferredDogBreed.dog_id)
                 .where(
-                    Dog.superseded_at.is_(None),
+                    *_active_dog_clauses(),
                     InferredDogBreed.method.in_(
                         ("image", "image_2nd", "cat_similarity", "cat_similarity_2nd")
                     ),
@@ -270,7 +282,7 @@ def _reload_caches() -> int:
         # up via LLM extraction still appear in the dropdown.
         age_cats: set[str] = set()
         for (age_en, age_fd) in session.execute(
-            select(Dog.age_en, Dog.age_from_desc).where(Dog.superseded_at.is_(None))
+            select(Dog.age_en, Dog.age_from_desc).where(*_active_dog_clauses())
         ).all():
             cat = normalize_age(age_en or age_fd)
             if cat:
@@ -281,7 +293,7 @@ def _reload_caches() -> int:
         # the raw IT scrape; `weight_from_desc` is the LLM extraction.
         weight_cats: set[str] = set()
         for (w, w_fd) in session.execute(
-            select(Dog.weight, Dog.weight_from_desc).where(Dog.superseded_at.is_(None))
+            select(Dog.weight, Dog.weight_from_desc).where(*_active_dog_clauses())
         ).all():
             cat = normalize_weight(w or w_fd)
             if cat:
@@ -315,7 +327,7 @@ def _reload_caches() -> int:
 
             dog_counts: Counter[str] = Counter()
             for en_arr, fd_arr in session.execute(
-                select(col_en, col_fd).where(Dog.superseded_at.is_(None))
+                select(col_en, col_fd).where(*_active_dog_clauses())
             ).all():
                 tags: set[str] = set()
                 for arr in (en_arr, fd_arr):
@@ -357,7 +369,7 @@ def _reload_caches() -> int:
             select(InferredDogBreed.value)
             .join(Dog, Dog.id == InferredDogBreed.dog_id)
             .where(
-                Dog.superseded_at.is_(None),
+                *_active_dog_clauses(),
                 InferredDogBreed.method == "image",
             )
             .distinct()
@@ -369,7 +381,7 @@ def _reload_caches() -> int:
         # date ranges
         min_post, max_post = session.execute(
             select(func.min(Dog.post_date), func.max(Dog.post_date)).where(
-                Dog.superseded_at.is_(None)
+                *_active_dog_clauses()
             )
         ).one()
         enums["post_date"] = {
@@ -379,7 +391,7 @@ def _reload_caches() -> int:
 
         min_ss, max_ss = session.execute(
             select(func.min(Dog.shelter_since), func.max(Dog.shelter_since)).where(
-                Dog.shelter_since.isnot(None), Dog.superseded_at.is_(None)
+                Dog.shelter_since.isnot(None), *_active_dog_clauses()
             )
         ).one()
         enums["shelter_since"] = {
@@ -393,14 +405,14 @@ def _reload_caches() -> int:
         # emitting a date will show up here after the next cache refresh.
         post_date_sources = session.execute(
             select(distinct(Dog.source_site)).where(
-                Dog.post_date.isnot(None), Dog.superseded_at.is_(None)
+                Dog.post_date.isnot(None), *_active_dog_clauses()
             )
         ).scalars().all()
         shelter_since_sources = session.execute(
             select(distinct(Dog.source_site)).where(
                 Dog.shelter_since.isnot(None),
                 Dog.shelter_since != "",
-                Dog.superseded_at.is_(None),
+                *_active_dog_clauses(),
             )
         ).scalars().all()
         enums["date_support"] = {
@@ -413,7 +425,7 @@ def _reload_caches() -> int:
 
         # stats cache
         dogs_rows = session.execute(
-            select(Dog).where(Dog.superseded_at.is_(None))
+            select(Dog).where(*_active_dog_clauses())
         ).scalars().all()
         # TODO: remove debug logging after cache issue is resolved
         logger.info(f"_reload_caches: ORM dog count={len(dogs_rows)}")
@@ -638,7 +650,7 @@ def filter_dogs(params: FilterDogsParams = Depends()):
         q = select(Dog).options(
             selectinload(Dog.images),
             selectinload(Dog.inferred_breeds),
-        ).where(Dog.superseded_at.is_(None))
+        ).where(*_active_dog_clauses())
 
         # SQL-level filters. Fields with a `_from_desc` sibling go through
         # `_eq_resolved` so the merge rule (prefer `_en`, fall back to
@@ -840,7 +852,7 @@ def get_dog(dog_id: int):
     with SessionLocal() as session:
         dog = session.execute(
             select(Dog)
-            .where(Dog.id == dog_id, Dog.superseded_at.is_(None))
+            .where(Dog.id == dog_id, *_active_dog_clauses())
             .options(
                 selectinload(Dog.images),
                 selectinload(Dog.inferred_breeds),
@@ -1304,7 +1316,7 @@ def search_dogs(req: SearchRequest):
         q = select(Dog).options(
             selectinload(Dog.images),
             selectinload(Dog.inferred_breeds),
-        ).where(Dog.superseded_at.is_(None))
+        ).where(*_active_dog_clauses())
 
         # SQL-level filters from extracted fields. Same merge rule as
         # /api/filter-dogs — see `_eq_resolved` for the rationale.
